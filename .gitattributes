@@ -1,1 +1,1 @@
-utils/ merge=ours
+utils/ merge=oursutils/** merge=ours
