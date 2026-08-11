@@ -53,7 +53,7 @@ class ClientSearchApp(QMainWindow):
         if len(query) < 2:
             return
 
-        conn = sqlite3.connect("mig_database.db")
+        conn = sqlite3.connect("../mig_database.db")
         cursor = conn.cursor()
         cursor.execute(
             """

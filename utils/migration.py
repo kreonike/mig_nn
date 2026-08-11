@@ -5,7 +5,7 @@ import pyodbc
 # 1. Пути к файлам
 access_file = "mig_17.01.2025.mdb"
 access_db_path = os.path.abspath(access_file)
-sqlite_db_path = os.path.abspath("mig_database.db")
+sqlite_db_path = os.path.abspath("../mig_database.db")
 
 # Если старая база SQLite существует — удаляем её для чистого импорта
 if os.path.exists(sqlite_db_path):
