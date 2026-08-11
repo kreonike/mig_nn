@@ -249,18 +249,23 @@ class AboutDialog(QDialog):
         layout.addWidget(btn_close)
 
     def check_updates(self):
-        """Проверка наличия новых релизов на GitHub."""
-        github_api_url = "https://api.github.com/repos/kreonike/mig_nn/releases/latest"
+        """Проверка наличия обновлений через raw.githubusercontent.com (без API лимитов и SSL ошибок)."""
+        import ssl
+
+        # Прямая ссылка на файл версии в репозитории (не имеет лимита запросов GitHub API)
+        raw_version_url = "https://raw.githubusercontent.com/kreonike/mig_nn/beta/version.json"
+
+        ssl_context = ssl._create_unverified_context()
 
         try:
             req = urllib.request.Request(
-                github_api_url,
+                raw_version_url,
                 headers={'User-Agent': 'Mozilla/5.0'}
             )
-            with urllib.request.urlopen(req, timeout=5) as response:
+            with urllib.request.urlopen(req, context=ssl_context, timeout=5) as response:
                 if response.status == 200:
                     data = json.loads(response.read().decode('utf-8'))
-                    latest_version = data.get('tag_name', '').lstrip('v')
+                    latest_version = data.get('version', '').strip()
 
                     if latest_version and latest_version != APP_VERSION:
                         QMessageBox.information(
@@ -277,7 +282,7 @@ class AboutDialog(QDialog):
                             f"У вас установлена самая свежая версия программы ({APP_VERSION}).",
                         )
                 else:
-                    raise Exception("Ошибка ответа сервера")
+                    raise Exception(f"Код ответа сервера: {response.status}")
         except Exception as e:
             QMessageBox.warning(
                 self,
