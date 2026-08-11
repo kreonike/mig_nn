@@ -1,7 +1,10 @@
 import os
 import sys
 import json
+import logging
+import subprocess
 import urllib.request
+from datetime import datetime
 
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QFont
@@ -29,8 +32,63 @@ from ui_gibdd_form import GibddFormDialog
 from ui_references import ReferencesDialog
 from ui_stats import StatsDialog
 
-_main_window = None
 APP_VERSION = "1.2.0"
+_main_window = None
+
+
+# ==============================================================================
+# 📝 НАСТРОЙКА ЛОГИРОВАНИЯ
+# ==============================================================================
+
+def setup_logging():
+    """Настройка логирования работы программы в папку logs."""
+    if getattr(sys, 'frozen', False):
+        base_dir = os.path.dirname(sys.executable)
+    else:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+
+    logs_dir = os.path.join(base_dir, "logs")
+    os.makedirs(logs_dir, exist_ok=True)
+
+    log_filename = datetime.now().strftime("app_%Y-%m-%d.log")
+    log_filepath = os.path.join(logs_dir, log_filename)
+
+    logger = logging.getLogger("MIG_NN")
+    logger.setLevel(logging.INFO)
+
+    if logger.hasHandlers():
+        logger.handlers.clear()
+
+    file_handler = logging.FileHandler(log_filepath, encoding="utf-8")
+    formatter = logging.Formatter(
+        "[%(asctime)s] [%(levelname)s] [%(name)s]: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    )
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+
+    logger.info("=" * 60)
+    logger.info(f"Запуск МИС МИГ-НН (Версия {APP_VERSION})")
+    logger.info(f"Рабочая директория: {base_dir}")
+    logger.info(f"Файл лога: {log_filepath}")
+    logger.info("=" * 60)
+
+    return logger
+
+
+logger = setup_logging()
+
+
+def log_uncaught_exceptions(exctype, value, traceback):
+    logger.critical("Неперехваченная критическая ошибка!", exc_info=(exctype, value, traceback))
+    sys.__excepthook__(exctype, value, traceback)
+
+
+sys.excepthook = log_uncaught_exceptions
 
 # ==============================================================================
 # 🎨 СТИЛИ ОФОРМЛЕНИЯ
@@ -249,12 +307,11 @@ class AboutDialog(QDialog):
         layout.addWidget(btn_close)
 
     def check_updates(self):
-        """Проверка наличия обновлений через raw.githubusercontent.com (без API лимитов и SSL ошибок)."""
+        """Проверка наличия обновлений через raw.githubusercontent.com."""
         import ssl
+        logger.info("Запуск процедуры проверки обновлений...")
 
-        # Прямая ссылка на файл версии в репозитории (не имеет лимита запросов GitHub API)
         raw_version_url = "https://raw.githubusercontent.com/kreonike/mig_nn/beta/version.json"
-
         ssl_context = ssl._create_unverified_context()
 
         try:
@@ -266,28 +323,107 @@ class AboutDialog(QDialog):
                 if response.status == 200:
                     data = json.loads(response.read().decode('utf-8'))
                     latest_version = data.get('version', '').strip()
+                    download_url = data.get('download_url', '').strip()
+                    changelog = data.get('changelog', '')
+
+                    logger.info(f"Получен ответ с сервера. Актуальная версия на GitHub: {latest_version}")
 
                     if latest_version and latest_version != APP_VERSION:
-                        QMessageBox.information(
+                        logger.info(f"Найдена новая версия ({latest_version}). Запрос у пользователя на скачивание.")
+                        msg = f"Найдена новая версия: <b>{latest_version}</b>!\n"
+                        msg += f"Текущая версия: {APP_VERSION}\n\n"
+                        if changelog:
+                            msg += f"<b>Что нового:</b>\n{changelog}\n\n"
+                        msg += "Хотите обновиться сейчас?"
+
+                        reply = QMessageBox.question(
                             self,
                             "Доступно обновление",
-                            f"Найдена новая версия: <b>{latest_version}</b>!\n"
-                            f"Текущая версия: {APP_VERSION}\n\n"
-                            f"Скачать обновление можно из репозитория GitHub.",
+                            msg,
+                            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
                         )
+
+                        if reply == QMessageBox.StandardButton.Yes:
+                            self.run_auto_update(download_url)
                     else:
+                        logger.info("Установлена самая свежая версия программы.")
                         QMessageBox.information(
                             self,
                             "Проверка обновлений",
                             f"У вас установлена самая свежая версия программы ({APP_VERSION}).",
                         )
                 else:
+                    logger.error(f"Сервер вернул статус ответа: {response.status}")
                     raise Exception(f"Код ответа сервера: {response.status}")
         except Exception as e:
+            logger.error(f"Ошибка при проверке обновлений: {e}", exc_info=True)
             QMessageBox.warning(
                 self,
                 "Ошибка связи",
                 f"Не удалось проверить обновления.\nПроверьте подключение к интернету.\n({e})",
+            )
+
+    def run_auto_update(self, download_url: str):
+        """Скачивает новый exe и перезапускает программу через bat-скрипт."""
+        import ssl
+
+        if not getattr(sys, 'frozen', False):
+            logger.warning("Попытка запуска автообновления из исходного кода Python.")
+            QMessageBox.information(
+                self,
+                "Режим разработки",
+                "Автообновление работает только в собранной .exe версии программы.\n"
+                "Для обновления кода используйте git pull."
+            )
+            return
+
+        if not download_url:
+            logger.error("Ссылка для скачивания файла пуста!")
+            QMessageBox.critical(self, "Ошибка обновления",
+                                 "Ссылка для скачивания обновления не указана в version.json.")
+            return
+
+        logger.info(f"Начало процесса автообновления. Скачивание: {download_url}")
+        ssl_context = ssl._create_unverified_context()
+
+        current_exe = sys.executable
+        exe_dir = os.path.dirname(current_exe)
+        new_exe = os.path.join(exe_dir, "app_update.tmp")
+        bat_file = os.path.join(exe_dir, "update.bat")
+
+        try:
+            logger.info(f"Сохранение временного файла: {new_exe}")
+            req = urllib.request.Request(download_url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, context=ssl_context) as response, open(new_exe, 'wb') as out_file:
+                out_file.write(response.read())
+
+            logger.info("Создание bat-скрипта автозамены...")
+            bat_content = f"""@echo off
+chcp 1251 > nul
+timeout /t 2 /nobreak > nul
+move /y "{new_exe}" "{current_exe}"
+start "" "{current_exe}"
+del "%~f0"
+"""
+            with open(bat_file, "w", encoding="cp1251") as f:
+                f.write(bat_content)
+
+            logger.info("Перезапуск приложения через update.bat...")
+            QMessageBox.information(
+                self,
+                "Обновление загружено",
+                "Программа перезапустится для завершения обновления."
+            )
+
+            subprocess.Popen([bat_file], shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            sys.exit(0)
+
+        except Exception as e:
+            logger.error(f"Сбой при скачивании или запуске автообновления: {e}", exc_info=True)
+            QMessageBox.critical(
+                self,
+                "Ошибка обновления",
+                f"Не удалось автоматически обновить файл:\n{e}"
             )
 
 
@@ -295,6 +431,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
+        logger.info("Инициализация главного окна...")
         self.setWindowTitle("Медицинская информационная система — Справки ГИБДД")
         self.resize(1180, 720)
 
@@ -306,6 +443,26 @@ class MainWindow(QMainWindow):
         self.current_clients = []
         self.init_ui()
         self.load_initial_clients()
+
+        # Автоматический бэкап при запуске
+        self.run_auto_backup()
+
+    def run_auto_backup(self):
+        """Выполняет автоматическое резервное копирование базы данных."""
+        logger.info("Старт процедуры автоматического бэкапа базы данных...")
+        try:
+            # Проверяем правильное имя функции make_daily_backup в модуле database
+            if hasattr(database, "make_daily_backup"):
+                db_filename = getattr(database, "DB_NAME", "mig_database.db")
+                database.make_daily_backup(db_filename, backup_dir="backups")
+                logger.info("Процедура бэкапа успешно отработала.")
+            elif hasattr(database, "create_backup"):
+                database.create_backup()
+                logger.info("Процедура бэкапа успешно отработала через create_backup.")
+            else:
+                logger.warning("Метод бэкапа в модуле database не обнаружен.")
+        except Exception as e:
+            logger.error(f"Ошибка при создании автоматического бэкапа БД: {e}", exc_info=True)
 
     def init_ui(self):
         central_widget = QWidget()
@@ -415,6 +572,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Готово к работе")
 
     def change_theme(self, theme_name: str):
+        logger.info(f"Переключение темы оформления на: {theme_name}")
         app = QApplication.instance()
         app.setStyleSheet("")
 
@@ -435,13 +593,18 @@ class MainWindow(QMainWindow):
         self.search_timer.stop()
         query = self.field_search.text().strip()
 
-        results = database.search_clients_for_completer(query, limit=200)
-        self.display_clients(results)
+        logger.info(f"Выполнение поиска пациентов по запросу: '{query}'")
+        try:
+            results = database.search_clients_for_completer(query, limit=200)
+            self.display_clients(results)
 
-        if results:
-            self.statusBar().showMessage(f"Найдено пациентов: {len(results)}")
-        else:
-            self.statusBar().showMessage("Пациенты не найдены")
+            if results:
+                self.statusBar().showMessage(f"Найдено пациентов: {len(results)}")
+            else:
+                self.statusBar().showMessage("Пациенты не найдены")
+        except Exception as e:
+            logger.error(f"Ошибка при выполнении поиска в базе данных: {e}", exc_info=True)
+            self.statusBar().showMessage("Ошибка поиска")
 
     def load_initial_clients(self):
         self.field_search.clear()
@@ -482,29 +645,39 @@ class MainWindow(QMainWindow):
     def on_client_double_clicked(self, row: int, col: int):
         if 0 <= row < len(self.current_clients):
             client = self.current_clients[row]
+            logger.info(f"Открытие карточки пациента ID: {client['id']}")
             dialog = ClientCardDialog(client["id"], self)
             if dialog.exec():
                 self.perform_client_search()
 
     def open_gibdd_form(self):
+        logger.info("Открытие формы создания справки ГИБДД...")
         dialog = GibddFormDialog(self)
         dialog.exec()
 
     def open_references_dialog(self):
+        logger.info("Открытие окна справочников...")
         dialog = ReferencesDialog(self)
         dialog.exec()
 
     def open_stats_dialog(self):
+        logger.info("Открытие окна статистики...")
         dialog = StatsDialog(self)
         dialog.exec()
 
     def open_about_dialog(self):
+        logger.info("Открытие окна 'О программе'...")
         dialog = AboutDialog(self)
         dialog.exec()
+
+    def closeEvent(self, event):
+        logger.info("Завершение работы приложения...")
+        event.accept()
 
 
 def main():
     global _main_window
+    logger.info("Инициализация QApplication...")
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(True)
     app.setStyle("Fusion")
@@ -512,6 +685,7 @@ def main():
 
     _main_window = MainWindow()
     _main_window.show()
+    logger.info("Главное окно успешно отображено.")
     sys.exit(app.exec())
 
 

@@ -1,6 +1,10 @@
 import os
 import shutil
+import logging
 from datetime import datetime
+
+# Подключаемся к общему логгеру приложения
+logger = logging.getLogger("MIG_NN")
 
 
 def make_daily_backup(db_path: str, backup_dir: str = "backups"):
@@ -9,20 +13,20 @@ def make_daily_backup(db_path: str, backup_dir: str = "backups"):
     Если сегодня бэкап уже делался, функция завершается без действий.
     """
     if not os.path.exists(db_path):
-        print(f"Бекап пропущен: файл базы '{db_path}' не найден.")
+        logger.warning(f"Бекап пропущен: файл базы '{db_path}' не найден.")
         return
 
     # Создаем папку для бекапов, если ее нет
     os.makedirs(backup_dir, exist_ok=True)
 
-    # Формируем префикс с сегодняшней датой: например "backup_mig_2026-08-07"
+    # Формируем префикс с сегодняшней датой: например "backup_mig_2026-08-11"
     today_str = datetime.now().strftime("%Y-%m-%d")
 
-    # Проверяем, делался ли уже бэкап СЕГОДНЯ любым из ПК
+    # Проверяем, делался ли уже бэкап СЕГОДНЯ
     existing_backups = [f for f in os.listdir(backup_dir) if f.startswith(f"backup_mig_{today_str}")]
 
     if existing_backups:
-        # Сегодня бекап уже создан — ничего не делаем
+        logger.info(f"Дневной бэкап за сегодня ({today_str}) уже существует. Пропускаем.")
         return
 
     # Если бэкапа за сегодня нет — создаем его
@@ -31,6 +35,6 @@ def make_daily_backup(db_path: str, backup_dir: str = "backups"):
 
     try:
         shutil.copy2(db_path, backup_full_path)
-        print(f"✅ Успешно создан дневной бэкап: {backup_full_path}")
+        logger.info(f"✅ Успешно создан дневной бэкап: {backup_full_path}")
     except Exception as e:
-        print(f"❌ Ошибка при создании бэкапа: {e}")
+        logger.error(f"❌ Ошибка при создании бэкапа: {e}", exc_info=True)
