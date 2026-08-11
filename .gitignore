@@ -1,7 +1,26 @@
+# Скрытые сервисные файлы macOS / Windows
+._*
+.DS_Store
+Thumbs.db
+
+# Виртуальное окружение и кэш Python
 .venv/
 venv/
 __pycache__/
+*.pyc
+
+# Сборки PyInstaller
 build/
 dist/
+*.spec
+
+# Базы данных, бэкапы и сгенерированные документы
+*.db
+*.mdb
+*.sqlite3
+*.pdf
+backups/
+
+# IDE
 .idea/
-*.exe
+.vscode/
