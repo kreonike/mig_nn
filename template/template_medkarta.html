@@ -1,0 +1,204 @@
+<html>
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+    <title>Медицинская карта 025/у</title>
+    <style>
+    @page {
+        size: A5 portrait;
+        margin: 5mm 8mm 5mm 8mm;
+    }
+    body {
+        font-family: 'Times New Roman', serif;
+        font-size: 7.5pt;
+        line-height: 1.15;
+        color: #000;
+    }
+    p {
+        text-align: justify;
+        margin: 0 0 1mm 0;
+    }
+    .underline {
+        border-bottom: 1px solid #000;
+        display: inline-block;
+        font-weight: bold;
+        padding: 0 3px;
+        text-align: center;
+    }
+    .header-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-bottom: 1.5mm;
+    }
+    .header-table td {
+        vertical-align: top;
+        font-size: 6.5pt;
+    }
+    .title-block {
+        text-align: center;
+        font-weight: bold;
+        font-size: 8pt;
+        margin: 2mm 0 1.5mm 0;
+    }
+    .grid-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 1.5mm;
+    }
+    .grid-table th, .grid-table td {
+        border: 1px solid #000;
+        padding: 2px;
+        text-align: center;
+        font-size: 6.5pt;
+    }
+</style>
+</head>
+<body>
+
+    <!-- ШАПКА ОРГАНИЗАЦИИ И МИНЗДРАВА -->
+    <table class="header-table" border="0" cellspacing="0" cellpadding="0">
+        <tr>
+            <td width="55%" align="left">
+                Наименование медицинской организации<br/>
+                <b>ООО «Медицинский центр Миг»</b><br/><br/>
+                Адрес <b>603003 г. Нижний Новгород ул. Павла Мочалова, д. 11</b>
+            </td>
+            <td width="45%" align="right">
+                Код формы по ОКУ _______________________<br/>
+                Код организации по ОКПО ___________________<br/>
+                Медицинская документация<br/>
+                Учетная форма N 025/у<br/>
+                Утверждена приказом Минздрава России<br/>
+                от 15.12.2014 N 834н
+            </td>
+        </tr>
+    </table>
+
+    <!-- ЗАГОЛОВОК КАРТЫ -->
+    <div class="title-block">
+        МЕДИЦИНСКАЯ КАРТА<br/>
+        ПАЦИЕНТА, ПОЛУЧАЮЩЕГО МЕДИЦИНСКУЮ ПОМОЩЬ<br/>
+        В АМБУЛАТОРНЫХ УСЛОВИЯХ N <span class="underline" style="min-width: 80px;">{{ doc.НомДоговора }}</span>
+    </div>
+
+    <!-- ПОЛЯ АНКЕТЫ ПАЦИЕНТА -->
+    <!-- Парсим дату выписки: day, month_name, year -->
+    {% set d_parts = doc.Дата.split('.') if doc.Дата and '.' in doc.Дата else ['10', '08', '2026'] %}
+    {% set months = {'01':'Января','02':'Февраля','03':'Матра','04':'Апреля','05':'Мая','06':'Июня','07':'Июля','08':'Августа','09':'Сентября','10':'Октября','11':'Ноября','12':'Декабря'} %}
+
+    <p style="margin-top: 3mm;">
+        1. Дата заполнения медицинской карты: число 
+        <span class="underline" style="min-width: 30px;">{{ d_parts[0] }}</span> 
+        Месяц 
+        <span class="underline" style="min-width: 70px;">{{ months.get(d_parts[1], 'Августа') }}</span> 
+        Год 
+        <span class="underline" style="min-width: 45px;">{{ d_parts[2] if d_parts|length > 2 else '2026' }}</span>
+    </p>
+
+    <p>
+        2. Фамилия, имя, отчество <span class="underline" style="width: 80%; text-align: left;">{{ doc.Фамилия }} {{ doc.Имя }} {{ doc.Отчество }}</span>
+    </p>
+
+    <!-- Парсим дату рождения -->
+    {% set b_parts = doc.ДатаРождения.split('.') if doc.ДатаРождения and '.' in doc.ДатаРождения else ['01', '01', '1980'] %}
+
+    <p>
+        3. Пол <span class="underline" style="min-width: 80px;">{{ doc.Пол }}</span> 
+        4. Дата рождения: число 
+        <span class="underline" style="min-width: 30px;">{{ b_parts[0] }}</span> 
+        Месяц 
+        <span class="underline" style="min-width: 70px;">{{ months.get(b_parts[1], '') }}</span> 
+        Год 
+        <span class="underline" style="min-width: 45px;">{{ b_parts[2] if b_parts|length > 2 else '' }}</span>
+    </p>
+
+    <p>
+        5. Место регистрации: субъект Российской Федерации <span class="underline" style="min-width: 150px;">{{ doc.Область }}</span>
+    </p>
+    <p>
+        район <span class="underline" style="min-width: 100px;">{{ doc.Район or '' }}</span> 
+        город <span class="underline" style="min-width: 120px;">{{ doc.Город }}</span> 
+        населенный пункт <span class="underline" style="min-width: 150px;"></span>
+    </p>
+    <p>
+        улица <span class="underline" style="min-width: 250px; text-align: left;">{{ doc.Улица }}</span> 
+        дом <span class="underline" style="min-width: 35px;">{{ doc.Дом }}</span> 
+        квартира <span class="underline" style="min-width: 35px;">{{ doc.Квартира }}</span> 
+        тел. <span class="underline" style="min-width: 100px;"></span>
+    </p>
+
+    <p>
+        6. Местность: <span class="underline" style="min-width: 100px;">городская</span>
+    </p>
+
+    <p>
+        7. Полис ОМС: серия <span class="underline" style="min-width: 80px;"></span> 
+        N <span class="underline" style="min-width: 120px;"></span> 
+        8. СНИЛС <span class="underline" style="min-width: 180px;"></span>
+    </p>
+
+    <p>
+        9. Наименование страховой медицинской организации <span class="underline" style="min-width: 350px;"></span>
+    </p>
+
+    <p>
+        10. Код категории льготы <span class="underline" style="min-width: 80px;"></span> 
+        11. Документ: паспорт : серия <span class="underline" style="min-width: 60px;">{{ doc.СерПасп }}</span> 
+        N <span class="underline" style="min-width: 90px;">{{ doc.ПспНом }}</span>
+    </p>
+
+    <p style="margin-top: 3mm;">
+        12. Заболевания, по поводу которых осуществляется диспансерное наблюдение:
+    </p>
+
+    <!-- ТАБЛИЦА ДИСПОБСЛЕДОВАНИЯ С ЧЕТКОЙ СЕТКОЙ -->
+    <table class="grid-table">
+        <thead>
+            <tr>
+                <th width="12%">Дата начала<br/>диспансерного<br/>наблюдения</th>
+                <th width="12%">Дата прекращения<br/>диспансерного<br/>наблюдения</th>
+                <th width="46%">Диагноз</th>
+                <th width="12%">Код по<br/>МКБ-10</th>
+                <th width="18%">Врач</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><b>{{ doc.Дата }}</b></td>
+                <td>&nbsp;</td>
+                <td>&nbsp;</td>
+                <td>&nbsp;</td>
+                <td>&nbsp;</td>
+            </tr>
+            <tr>
+                <td>&nbsp;</td>
+                <td>&nbsp;</td>
+                <td>&nbsp;</td>
+                <td>&nbsp;</td>
+                <td>&nbsp;</td>
+            </tr>
+            <tr>
+                <td>&nbsp;</td>
+                <td>&nbsp;</td>
+                <td>&nbsp;</td>
+                <td>&nbsp;</td>
+                <td>&nbsp;</td>
+            </tr>
+            <tr>
+                <td>&nbsp;</td>
+                <td>&nbsp;</td>
+                <td>&nbsp;</td>
+                <td>&nbsp;</td>
+                <td>&nbsp;</td>
+            </tr>
+            <tr>
+                <td>&nbsp;</td>
+                <td>&nbsp;</td>
+                <td>&nbsp;</td>
+                <td>&nbsp;</td>
+                <td>&nbsp;</td>
+            </tr>
+        </tbody>
+    </table>
+
+</body>
+</html>
