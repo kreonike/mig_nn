@@ -96,14 +96,14 @@ class PrintMenuDialog(QDialog):
         cleaned = re.sub(r'justify-content\s*:\s*space-between\s*;?', '', cleaned)
         return cleaned
 
-    def _print_html_direct(
+    def _print_batch_templates(
             self,
-            html_content: str,
-            doc_title: str,
+            template_names: list,
+            batch_title: str,
             page_size=QPageSize.PageSizeId.A5,
             orientation=QPageLayout.Orientation.Portrait
     ):
-        """Прямая печать с принудительными безопасными отступами на уровне принтера."""
+        """Пакетная печать документов с разрывом страниц и безопасными отступами принтера."""
         from PyQt6.QtCore import QSizeF, QMarginsF
         from PyQt6.QtGui import QPageLayout
 
@@ -111,8 +111,7 @@ class PrintMenuDialog(QDialog):
         printer.setPageSize(QPageSize(page_size))
         printer.setPageOrientation(orientation)
 
-        # Принудительно задаем отступы (в миллиметрах) на уровне драйвера принтера.
-        # 10 мм слева и справа гарантированно выведут текст из мертвой зоны роликов.
+        # Устанавливаем такие же безопасные отступы, как для договора, чтобы поля не обрезались
         safe_layout = QPageLayout(
             QPageSize(page_size),
             orientation,
@@ -120,32 +119,6 @@ class PrintMenuDialog(QDialog):
             QPageLayout.Unit.Millimeter
         )
         printer.setPageLayout(safe_layout)
-
-        dialog = QPrintDialog(printer, self)
-        dialog.setWindowTitle(f"Печать: {doc_title}")
-
-        if dialog.exec() == QPrintDialog.DialogCode.Accepted:
-            document = QTextDocument()
-            safe_html = self._clean_html_for_qt(html_content)
-            document.setHtml(safe_html)
-
-            rect = printer.pageLayout().paintRectPoints()
-            document.setPageSize(QSizeF(rect.width(), rect.height()))
-
-            document.print(printer)
-
-    def _print_batch_templates(
-        self,
-        template_names: list,
-        batch_title: str,
-        page_size=QPageSize.PageSizeId.A5,
-        orientation=QPageLayout.Orientation.Portrait
-    ):
-        """Пакетная печать документов с разрывом страниц и заданной ориентацией."""
-        printer = QPrinter(QPrinter.PrinterMode.HighResolution)
-        printer.setPageSize(QPageSize(page_size))
-        printer.setPageOrientation(orientation)
-        printer.setFullPage(True)
 
         dialog = QPrintDialog(printer, self)
         dialog.setWindowTitle(f"Печать: {batch_title}")
@@ -164,6 +137,62 @@ class PrintMenuDialog(QDialog):
                     html = self._render_template_to_html(t_name)
                     safe_html = self._clean_html_for_qt(html)
                     cursor.insertHtml(safe_html)
+
+                rect = printer.pageLayout().paintRectPoints()
+                document.setPageSize(QSizeF(rect.width(), rect.height()))
+
+                document.print(printer)
+            except Exception as e:
+                QMessageBox.critical(
+                    self,
+                    "Ошибка печати",
+                    f"Не удалось напечатать '{batch_title}':\n{e}",
+                )
+
+    def _print_batch_templates(
+            self,
+            template_names: list,
+            batch_title: str,
+            page_size=QPageSize.PageSizeId.A5,
+            orientation=QPageLayout.Orientation.Portrait
+    ):
+        """Пакетная печать документов с разрывом страниц и безопасными отступами (как у договора)."""
+        from PyQt6.QtCore import QSizeF, QMarginsF
+        from PyQt6.QtGui import QPageLayout
+
+        printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+        printer.setPageSize(QPageSize(page_size))
+        printer.setPageOrientation(orientation)
+
+        # Принудительно задаем точно такие же защитные отступы, как у основного договора
+        safe_layout = QPageLayout(
+            QPageSize(page_size),
+            orientation,
+            QMarginsF(30.0, 8.0, 30.0, 8.0),  # Лево, Верх, Право, Низ в мм
+            QPageLayout.Unit.Millimeter
+        )
+        printer.setPageLayout(safe_layout)
+
+        dialog = QPrintDialog(printer, self)
+        dialog.setWindowTitle(f"Печать: {batch_title}")
+
+        if dialog.exec() == QPrintDialog.DialogCode.Accepted:
+            try:
+                document = QTextDocument()
+                cursor = QTextCursor(document)
+
+                for i, t_name in enumerate(template_names):
+                    if i > 0:
+                        block_fmt = QTextBlockFormat()
+                        block_fmt.setPageBreakPolicy(QTextFormat.PageBreakFlag.PageBreak_AlwaysBefore)
+                        cursor.insertBlock(block_fmt)
+
+                    html = self._render_template_to_html(t_name)
+                    safe_html = self._clean_html_for_qt(html)
+                    cursor.insertHtml(safe_html)
+
+                rect = printer.pageLayout().paintRectPoints()
+                document.setPageSize(QSizeF(rect.width(), rect.height()))
 
                 document.print(printer)
             except Exception as e:
