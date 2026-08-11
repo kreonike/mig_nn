@@ -1,174 +1,172 @@
-import os
-import subprocess
-import sys
-from PyQt6.QtWidgets import QDialog, QMessageBox, QPushButton, QVBoxLayout
-from printer import generate_pdf_from_html
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QFont, QPageLayout, QPageSize, QPainter, QTextDocument
+from PyQt6.QtPrintSupport import QPrintDialog, QPrintPreviewDialog, QPrinter
+from PyQt6.QtWidgets import (
+    QDialog,
+    QHBoxLayout,
+    QMessageBox,
+    QPushButton,
+    QVBoxLayout,
+)
 
 
 class PrintMenuDialog(QDialog):
-    """Диалоговое окно выбора документов для печати."""
 
     def __init__(self, client_data: dict, deal_data: dict, parent=None):
         super().__init__(parent)
+        self.setWindowTitle("🖨️ Печать документов")
+        self.resize(400, 250)
+
         self.client_data = client_data
         self.deal_data = deal_data
-
-        self.setWindowTitle("Печать документов")
-        self.setFixedSize(280, 320)
 
         self.init_ui()
 
     def init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(8)
 
-        # Кнопки
-        self.btn_dogovor = QPushButton("Договор")
-        self.btn_sogl_opd = QPushButton("Согл на ОПД")
-        self.btn_med_karta = QPushButton("МедКарта")
-        self.btn_doc_narkolog = QPushButton("Документы Нарколог")
-        self.btn_doc_psih = QPushButton("Документы Психиатр")
-        self.btn_pso = QPushButton("ПСО")
+        btn_print_contract = QPushButton("📝 Напечатать Договор")
+        btn_print_contract.setStyleSheet("padding: 10px; font-weight: bold;")
+        btn_print_contract.clicked.connect(self.print_contract)
 
-        self.btn_close = QPushButton("Закрыть")
-        self.btn_close.setStyleSheet(
-            "font-weight: bold; margin-top: 10px; background-color: #e5f3ff;"
-        )
+        btn_print_cert = QPushButton("📜 Напечатать Справку (Бланк)")
+        btn_print_cert.setStyleSheet("padding: 10px; font-weight: bold;")
+        btn_print_cert.clicked.connect(self.print_certificate)
 
-        # Подключение обработчиков
-        self.btn_dogovor.clicked.connect(self.print_dogovor)
-        self.btn_sogl_opd.clicked.connect(self.print_sogl_opd)
-        self.btn_med_karta.clicked.connect(self.print_med_karta)
-        self.btn_doc_narkolog.clicked.connect(self.print_docs_narkolog)
-        self.btn_doc_psih.clicked.connect(self.print_docs_psych)
-        self.btn_pso.clicked.connect(self.print_pso)
+        btn_preview = QPushButton("👁️ Предпросмотр перед печатью")
+        btn_preview.clicked.connect(self.preview_contract)
 
-        self.btn_close.clicked.connect(self.accept)
+        btn_close = QPushButton("Закрыть")
+        btn_close.clicked.connect(self.accept)
 
-        layout.addWidget(self.btn_dogovor)
-        layout.addWidget(self.btn_sogl_opd)
-        layout.addWidget(self.btn_med_karta)
-        layout.addWidget(self.btn_doc_narkolog)
-        layout.addWidget(self.btn_doc_psih)
-        layout.addWidget(self.btn_pso)
+        layout.addWidget(btn_print_contract)
+        layout.addWidget(btn_print_cert)
+        layout.addWidget(btn_preview)
         layout.addStretch()
-        layout.addWidget(self.btn_close)
+        layout.addWidget(btn_close)
 
-    def print_dogovor(self):
-        pdf_path = generate_pdf_from_html(
-            template_name="template_dogovor.html",
-            client_data=self.client_data,
-            deal_data=self.deal_data,
-            output_pdf_name=f"Договор_{self.client_data.get('Фамилия', 'Пациент')}.pdf",
-        )
-        self._open_pdf(pdf_path, "Договора")
+    def generate_contract_html(self) -> str:
+        """Формирует HTML-текст договора для отправки на печать."""
+        fam = self.client_data.get("Фамилия", "")
+        nam = self.client_data.get("Имя", "")
+        otch = self.client_data.get("Отчество", "")
+        birth = self.client_data.get("ДатаРождения", "")
+        p_ser = self.client_data.get("СерПасп", "")
+        p_nom = self.client_data.get("ПспНом", "")
+        p_vidan = self.client_data.get("ПаспортВыданМесто", "")
 
-    def print_sogl_opd(self):
-        pdf_path = generate_pdf_from_html(
-            template_name="template_agree.html",
-            client_data=self.client_data,
-            deal_data=self.deal_data,
-            output_pdf_name=f"Согласие_ОПД_{self.client_data.get('Фамилия', 'Пациент')}.pdf",
-        )
-        self._open_pdf(pdf_path, "Согласия на ОПД")
+        num_dog = self.deal_data.get("НомДоговора", "")
+        date_dog = self.deal_data.get("Дата", "")
+        summa = self.deal_data.get("СуммаДоговора", "500")
 
-    def print_med_karta(self):
-        pdf_path = generate_pdf_from_html(
-            template_name="template_medkarta.html",
-            client_data=self.client_data,
-            deal_data=self.deal_data,
-            output_pdf_name=f"МедКарта_{self.client_data.get('Фамилия', 'Пациент')}.pdf",
-        )
-        self._open_pdf(pdf_path, "Медицинской карты")
+        html = f"""
+        <html>
+        <head>
+            <style>
+                body {{ font-family: 'Times New Roman', serif; font-size: 12pt; margin: 20px; }}
+                h2 {{ text-align: center; margin-bottom: 5px; }}
+                .date-row {{ text-align: justify; margin-bottom: 20px; }}
+                p {{ text-align: justify; text-indent: 20px; margin-top: 5px; margin-bottom: 5px; }}
+                .signatures {{ margin-top: 40px; width: 100%; }}
+            </style>
+        </head>
+        <body>
+            <h2>ДОГОВОР № {num_dog}</h2>
+            <h3 style="text-align: center;">об оказании платных медицинских услуг</h3>
 
-    def print_docs_narkolog(self):
-        fam = self.client_data.get('Фамилия', 'Пациент')
+            <p class="date-row"><b>г. Нижний Новгород</b> <span style="float: right;"><b>{date_dog} г.</b></span></p>
 
-        pdf_karta = generate_pdf_from_html(
-            template_name="template_medkarta_nark.html",
-            client_data=self.client_data,
-            deal_data=self.deal_data,
-            output_pdf_name=f"МедКарта_Нарколог_{fam}.pdf",
-        )
-        self._open_pdf(pdf_karta, "МедКарты Нарколог")
+            <p>Медицинская организация, именуемая в дальнейшем «Исполнитель», с одной стороны, и 
+            <b>{fam} {nam} {otch}</b> ({birth} г.р.), паспорт: {p_ser} {p_nom}, выдан: {p_vidan},
+            именуемый(ая) в дальнейшем «Заказчик», заключили настоящий Договор о нижеследующем:</p>
 
-        pdf_dog = generate_pdf_from_html(
-            template_name="template_dogovor_narkolog.html",
-            client_data=self.client_data,
-            deal_data=self.deal_data,
-            output_pdf_name=f"Договор_Нарколог_{fam}.pdf",
-        )
-        self._open_pdf(pdf_dog, "Договора Нарколог")
+            <p><b>1. Предмет договора:</b> Исполнитель обязуется оказать Заказчику медицинские услуги по проведению медицинского освидетельствования на наличие медицинских противопоказаний к управлению транспортными средствами.</p>
 
-        pdf_combo = generate_pdf_from_html(
-            template_name="template_doc_narkolog_combo.html",
-            client_data=self.client_data,
-            deal_data=self.deal_data,
-            output_pdf_name=f"Осмотр_Согласие_Нарколог_{fam}.pdf",
-        )
-        self._open_pdf(pdf_combo, "Листа осмотра и Согласия Нарколога")
+            <p><b>2. Стоимость услуг:</b> Стоимость оказываемых услуг по настоящему Договору составляет <b>{summa} рублей</b>. Оплата производится Заказчиком в полном объеме при подписании Договора.</p>
 
-    def print_docs_psych(self):
-        """Пакетная генерация всех документов Психиатра (каждый на отдельном листе A5)."""
-        fam = self.client_data.get('Фамилия', 'Пациент')
+            <p><b>3. Адрес и реквизиты сторон:</b></p>
 
-        # 1. Согласие Психиатр
-        pdf_agree = generate_pdf_from_html(
-            template_name="template_agree_psych.html",
-            client_data=self.client_data,
-            deal_data=self.deal_data,
-            output_pdf_name=f"Согласие_Психиатр_{fam}.pdf",
-        )
-        self._open_pdf(pdf_agree, "Согласия Психиатра")
+            <table style="width: 100%; margin-top: 20px;">
+                <tr>
+                    <td style="width: 50%; vertical-align: top;">
+                        <b>Исполнитель:</b><br>
+                        Медицинский центр «МИГ»<br>
+                        г. Нижний Новгород<br>
+                        Подпись: _________________
+                    </td>
+                    <td style="width: 50%; vertical-align: top;">
+                        <b>Заказчик:</b><br>
+                        {fam} {nam} {otch}<br>
+                        Паспорт: {p_ser} {p_nom}<br>
+                        Подпись: _________________
+                    </td>
+                </tr>
+            </table>
+        </body>
+        </html>
+        """
+        return html
 
-        # 2. Доверенность Психиатр
-        pdf_dover = generate_pdf_from_html(
-            template_name="template_dover_psych.html",
-            client_data=self.client_data,
-            deal_data=self.deal_data,
-            output_pdf_name=f"Доверенность_Психиатр_{fam}.pdf",
-        )
-        self._open_pdf(pdf_dover, "Доверенности Психиатра")
+    def render_doc_to_printer(self, printer: QPrinter):
+        """Рендерит документ на выбранный принтер."""
+        doc = QTextDocument()
+        doc.setHtml(self.generate_contract_html())
+        doc.setPageSize(printer.pageRect(QPrinter.Unit.Point).size())
+        doc.print(printer)
 
-        # 3. Осмотр Психиатра
-        pdf_osmotr = generate_pdf_from_html(
-            template_name="template_osmotr_psych.html",
-            client_data=self.client_data,
-            deal_data=self.deal_data,
-            output_pdf_name=f"Осмотр_Психиатра_{fam}.pdf",
-        )
-        self._open_pdf(pdf_osmotr, "Осмотра Психиатра")
+    def print_contract(self):
+        """Прямая печать Договора через системный диалог выбора принтера."""
+        printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+        printer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
 
-        # 4. МедКарта Кащенко
-        pdf_karta = generate_pdf_from_html(
-            template_name="template_medkarta_psych.html",
-            client_data=self.client_data,
-            deal_data=self.deal_data,
-            output_pdf_name=f"МедКарта_Психиатр_{fam}.pdf",
-        )
-        self._open_pdf(pdf_karta, "МедКарты Психиатра")
+        dialog = QPrintDialog(printer, self)
+        dialog.setWindowTitle("Печать договора")
 
-    def print_pso(self):
-        """Генерация и открытие Заключения ПСО (Психиатрического освидетельствования)."""
-        fam = self.client_data.get('Фамилия', 'Пациент')
-        pdf_pso = generate_pdf_from_html(
-            template_name="template_pso.html",
-            client_data=self.client_data,
-            deal_data=self.deal_data,
-            output_pdf_name=f"Заключение_ПСО_{fam}.pdf",
-        )
-        self._open_pdf(pdf_pso, "Заключения ПСО")
-
-    def _open_pdf(self, pdf_path: str, doc_title: str):
-        if pdf_path and os.path.exists(pdf_path):
-            if sys.platform == "win32":
-                os.startfile(pdf_path)
-            elif sys.platform == "darwin":
-                subprocess.run(["open", pdf_path])
-            else:
-                subprocess.run(["xdg-open", pdf_path])
-        else:
-            QMessageBox.critical(
-                self, "Ошибка", f"Не удалось сгенерировать PDF файл {doc_title}."
+        if dialog.exec() == QPrintDialog.DialogCode.Accepted:
+            self.render_doc_to_printer(printer)
+            QMessageBox.information(
+                self, "Успех", "Документ отправлен на печать!"
             )
+
+    def preview_contract(self):
+        """Предпросмотр документа перед отправкой на физический принтер."""
+        printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+        printer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
+
+        preview = QPrintPreviewDialog(printer, self)
+        preview.setWindowTitle("Предпросмотр документа")
+        preview.paintRequested.connect(self.render_doc_to_printer)
+        preview.exec()
+
+    def print_certificate(self):
+        """Печать медицинской справки ГИБДД (позиционирование текста поверх готового бланка)."""
+        printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+        printer.setPageSize(QPageSize(QPageSize.PageSizeId.A5))
+
+        dialog = QPrintDialog(printer, self)
+        dialog.setWindowTitle("Печать на бланке справки")
+
+        if dialog.exec() == QPrintDialog.DialogCode.Accepted:
+            painter = QPainter()
+            if painter.begin(printer):
+                font = QFont("Times New Roman", 10)
+                painter.setFont(font)
+
+                fam = self.client_data.get("Фамилия", "")
+                nam = self.client_data.get("Имя", "")
+                otch = self.client_data.get("Отчество", "")
+                birth = self.client_data.get("ДатаРождения", "")
+                address = f"{self.client_data.get('Город', '')}, ул. {self.client_data.get('Улица', '')}, d. {self.client_data.get('Дом', '')}"
+
+                # Печать значений в нужные координаты бланка (X, Y)
+                painter.drawText(150, 100, f"{fam} {nam} {otch}")
+                painter.drawText(150, 130, birth)
+                painter.drawText(150, 160, address)
+                painter.drawText(
+                    150, 200, f"Категории: {self.deal_data.get('КатегорияТС', 'B')}"
+                )
+
+                painter.end()
+                QMessageBox.information(
+                    self, "Успех", "Справка отправлена на печать!"
+                )
