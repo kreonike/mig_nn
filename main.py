@@ -311,7 +311,7 @@ class AboutDialog(QDialog):
         import ssl
         logger.info("Запуск процедуры проверки обновлений...")
 
-        raw_version_url = "https://raw.githubusercontent.com/kreonike/mig_nn/beta/version.json"
+        raw_version_url = "https://raw.githubusercontent.com/kreonike/mig_nn/main/version.json"
         ssl_context = ssl._create_unverified_context()
 
         try:
