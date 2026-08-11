@@ -1,4 +1,5 @@
 from datetime import datetime
+import sqlite3
 from PyQt6.QtCore import QDate, QStringListModel, Qt, QTimer
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
@@ -33,10 +34,17 @@ class GibddFormDialog(QDialog):
         self.found_clients_map = {}
         self._block_search_signal = False
 
+        # Таймер поиска пациента
         self.search_timer = QTimer(self)
         self.search_timer.setSingleShot(True)
         self.search_timer.setInterval(200)
         self.search_timer.timeout.connect(self._execute_search)
+
+        # Таймер поиска улицы
+        self.street_search_timer = QTimer(self)
+        self.street_search_timer.setSingleShot(True)
+        self.street_search_timer.setInterval(200)
+        self.street_search_timer.timeout.connect(self._execute_street_search)
 
         self.init_ui()
         self.create_new_deal_number()
@@ -45,6 +53,7 @@ class GibddFormDialog(QDialog):
     def init_ui(self):
         main_layout = QVBoxLayout(self)
 
+        # ПАНЕЛЬ ПОИСКА ПАЦИЕНТА
         search_box = QHBoxLayout()
         search_label = QLabel("🔍 Поиск пациента:")
         search_label.setStyleSheet("font-weight: bold;")
@@ -115,7 +124,16 @@ class GibddFormDialog(QDialog):
         self.field_rayon = QComboBox()
         self.field_rayon.setEditable(True)
 
+        # Поле улицы с автоподстановкой из БД
         self.field_ulica = QLineEdit()
+        self.street_completer_model = QStringListModel(self)
+        self.street_completer = QCompleter(self.street_completer_model, self)
+        self.street_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self.street_completer.setCompletionMode(QCompleter.CompletionMode.UnfilteredPopupCompletion)
+
+        self.field_ulica.setCompleter(self.street_completer)
+        self.field_ulica.textEdited.connect(self.on_street_text_edited)
+
         self.field_dom = QLineEdit()
         self.field_kv = QLineEdit()
 
@@ -132,7 +150,6 @@ class GibddFormDialog(QDialog):
         box_deal = QGroupBox("3. Детали справки")
         form_deal = QFormLayout(box_deal)
 
-        # Выбор пресетов/тарифов
         self.combo_preset = QComboBox()
         self.combo_preset.currentIndexChanged.connect(self.on_preset_changed)
 
@@ -207,7 +224,6 @@ class GibddFormDialog(QDialog):
         self.field_vidan.clear()
         self.field_vidan.addItems(database.get_uvd_list())
 
-        # Загрузка пресетов из БД
         self.combo_preset.clear()
         self.combo_preset.addItem("— Выберите пресет —", None)
         presets = database.get_presets_list("ГИБДД")
@@ -235,6 +251,7 @@ class GibddFormDialog(QDialog):
         self.field_num_dog.setText(str(next_id))
         self.field_spr_num.clear()
 
+    # ПОИСК ПАЦИЕНТА
     def on_search_text_edited(self, text: str):
         if self._block_search_signal:
             return
@@ -274,6 +291,56 @@ class GibddFormDialog(QDialog):
         client = self.found_clients_map.get(selected_text)
         if client:
             self.fill_client_data(client)
+
+    # ПОИСК И АВТОПОДСТАНОВКА УЛИЦЫ
+    def on_street_text_edited(self, text: str):
+        self.street_search_timer.start()
+
+    def _execute_street_search(self):
+        """Запрос улиц из базы и обновление выпадающего списка."""
+        query = self.field_ulica.text().strip()
+        if not query:
+            self.street_completer_model.setStringList([])
+            return
+
+        streets = []
+        try:
+            # Пробуем вызвать функцию из database.py (с учетом разных вариантов сигнатуры)
+            if hasattr(database, "get_streets_list"):
+                try:
+                    streets = database.get_streets_list(query, limit=50)
+                except TypeError:
+                    # Если функция в database.py принимает только query или вообще без аргументов
+                    try:
+                        streets = database.get_streets_list(query)
+                    except TypeError:
+                        streets = database.get_streets_list()
+            else:
+                # Резервный прямой запрос к SQLite, если в database.py нет метода
+                conn = sqlite3.connect("mig_database.db")
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT DISTINCT Улица FROM Клиенты WHERE Улица LIKE ? AND Улица"
+                    " IS NOT NULL AND Улица != '' ORDER BY Улица LIMIT 50",
+                    (f"%{query}%",),
+                )
+                streets = [r[0] for r in cursor.fetchall() if r[0]]
+                conn.close()
+        except Exception:
+            streets = []
+
+        # Фильтрация по введенному тексту на случай, если функция вернула весь список
+        if query and streets:
+            query_lower = query.lower()
+            streets = [s for s in streets if query_lower in s.lower()]
+
+        self.street_completer_model.setStringList(streets)
+
+        if streets:
+            self.street_completer.setCompletionMode(
+                QCompleter.CompletionMode.UnfilteredPopupCompletion
+            )
+            self.street_completer.complete()
 
     def fill_client_data(self, c: dict):
         self.current_client_id = c["id"]

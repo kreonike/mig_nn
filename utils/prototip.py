@@ -31,7 +31,7 @@ def main(page: ft.Page):
             page.update()
             return
 
-        conn = sqlite3.connect("mig_database.db")
+        conn = sqlite3.connect("../mig_database.db")
         cursor = conn.cursor()
         # Лимитируем 50 записями для быстродействия UI
         cursor.execute(

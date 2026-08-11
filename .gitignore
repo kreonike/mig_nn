@@ -23,4 +23,4 @@ backups/
 
 # IDE
 .idea/
-.vscode/
+.vscode/utils/

@@ -882,3 +882,70 @@ def get_districts_list() -> List[str]:
 
 def get_uvd_list() -> List[str]:
     return ["УВД Нижегородского района", "УВД Автозаводского района", "УВД Сормовского района"]
+
+def get_client_deals(client_id: int) -> list:
+  """Возвращает список всех сделок конкретного клиента по его ID."""
+  conn = get_connection()  # Используйте вашу функцию подключения к БД
+  cursor = conn.cursor()
+
+  try:
+    # 1. Определяем точное имя таблицы со сделками ('Сделки' или альтернативы)
+    cursor.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name IN"
+        " ('Сделки', 'deals')"
+    )
+    table_row = cursor.fetchone()
+    if not table_row:
+      return []
+
+    table_name = table_row[0]
+
+    # 2. Получаем список всех колонок в этой таблице
+    cursor.execute(f"PRAGMA table_info([{table_name}])")
+    columns_info = cursor.fetchall()
+    column_names = [col[1] for col in columns_info]
+
+    # Ищем имя колонки для привязки клиента (КлиентID, client_id и т.д.)
+    client_col_candidates = ["КлиентID", "клиент_id", "client_id", "IDКлиента"]
+    client_col = next(
+        (col for col in client_col_candidates if col in column_names), None
+    )
+
+    if not client_col:
+      # Если не нашли по точным именам, ищем любое поле, содержащее 'клиент' или 'client'
+      client_col = next(
+          (
+              col
+              for col in column_names
+              if "клиент" in col.lower() or "client" in col.lower()
+          ),
+          None,
+      )
+
+    if not client_col:
+      return []
+
+    # 3. Ищем колонку сортировки (id, ID, НомДоговора и т.д.)
+    sort_col = "rowid"
+    for candidate in ["id", "ID", "Код", "НомДоговора"]:
+      if candidate in column_names:
+        sort_col = candidate
+        break
+
+    # 4. Выполняем безопасный запрос
+    query = (
+        f"SELECT * FROM [{table_name}] WHERE [{client_col}] = ? ORDER BY"
+        f" [{sort_col}] DESC"
+    )
+    cursor.execute(query, (client_id,))
+
+    rows = cursor.fetchall()
+    columns = [description[0] for description in cursor.description]
+    deals = [dict(zip(columns, row)) for row in rows]
+    return deals
+
+  except Exception as e:
+    print(f"Ошибка при получении сделок клиента: {e}")
+    return []
+  finally:
+    conn.close()
