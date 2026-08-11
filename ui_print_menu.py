@@ -1,172 +1,262 @@
+import os
+import re
+import sys
+from jinja2 import Template
+
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont, QPageLayout, QPageSize, QPainter, QTextDocument
-from PyQt6.QtPrintSupport import QPrintDialog, QPrintPreviewDialog, QPrinter
-from PyQt6.QtWidgets import (
-    QDialog,
-    QHBoxLayout,
-    QMessageBox,
-    QPushButton,
-    QVBoxLayout,
+from PyQt6.QtGui import (
+    QPageLayout,
+    QPageSize,
+    QTextBlockFormat,
+    QTextCursor,
+    QTextDocument,
+    QTextFormat,
 )
+from PyQt6.QtPrintSupport import QPrintDialog, QPrinter
+from PyQt6.QtWidgets import QDialog, QMessageBox, QPushButton, QVBoxLayout
 
 
 class PrintMenuDialog(QDialog):
+    """Диалоговое окно выбора документов с поддержкой разной ориентации страниц."""
 
     def __init__(self, client_data: dict, deal_data: dict, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("🖨️ Печать документов")
-        self.resize(400, 250)
-
         self.client_data = client_data
         self.deal_data = deal_data
+
+        # Объединяем данные пациента и сделки в единый контекст
+        self.doc_context = {**self.client_data, **self.deal_data}
+
+        self.setWindowTitle("Печать документов")
+        self.setFixedSize(280, 320)
 
         self.init_ui()
 
     def init_ui(self):
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(8)
 
-        btn_print_contract = QPushButton("📝 Напечатать Договор")
-        btn_print_contract.setStyleSheet("padding: 10px; font-weight: bold;")
-        btn_print_contract.clicked.connect(self.print_contract)
+        self.btn_dogovor = QPushButton("Договор")
+        self.btn_sogl_opd = QPushButton("Согл на ОПД")
+        self.btn_med_karta = QPushButton("МедКарта")
+        self.btn_doc_narkolog = QPushButton("Документы Нарколог")
+        self.btn_doc_psih = QPushButton("Документы Психиатр")
+        self.btn_pso = QPushButton("ПСО")
 
-        btn_print_cert = QPushButton("📜 Напечатать Справку (Бланк)")
-        btn_print_cert.setStyleSheet("padding: 10px; font-weight: bold;")
-        btn_print_cert.clicked.connect(self.print_certificate)
+        self.btn_close = QPushButton("Закрыть")
+        self.btn_close.setStyleSheet(
+            "font-weight: bold; margin-top: 10px; background-color: #e5f3ff;"
+        )
 
-        btn_preview = QPushButton("👁️ Предпросмотр перед печатью")
-        btn_preview.clicked.connect(self.preview_contract)
+        # Подключение обработчиков
+        self.btn_dogovor.clicked.connect(self.print_dogovor)
+        self.btn_sogl_opd.clicked.connect(self.print_sogl_opd)
+        self.btn_med_karta.clicked.connect(self.print_med_karta)
+        self.btn_doc_narkolog.clicked.connect(self.print_docs_narkolog)
+        self.btn_doc_psih.clicked.connect(self.print_docs_psih)
+        self.btn_pso.clicked.connect(self.print_pso)
 
-        btn_close = QPushButton("Закрыть")
-        btn_close.clicked.connect(self.accept)
+        self.btn_close.clicked.connect(self.accept)
 
-        layout.addWidget(btn_print_contract)
-        layout.addWidget(btn_print_cert)
-        layout.addWidget(btn_preview)
+        layout.addWidget(self.btn_dogovor)
+        layout.addWidget(self.btn_sogl_opd)
+        layout.addWidget(self.btn_med_karta)
+        layout.addWidget(self.btn_doc_narkolog)
+        layout.addWidget(self.btn_doc_psih)
+        layout.addWidget(self.btn_pso)
         layout.addStretch()
-        layout.addWidget(btn_close)
+        layout.addWidget(self.btn_close)
 
-    def generate_contract_html(self) -> str:
-        """Формирует HTML-текст договора для отправки на печать."""
-        fam = self.client_data.get("Фамилия", "")
-        nam = self.client_data.get("Имя", "")
-        otch = self.client_data.get("Отчество", "")
-        birth = self.client_data.get("ДатаРождения", "")
-        p_ser = self.client_data.get("СерПасп", "")
-        p_nom = self.client_data.get("ПспНом", "")
-        p_vidan = self.client_data.get("ПаспортВыданМесто", "")
+    def _render_template_to_html(self, template_name: str) -> str:
+        """Загружает Jinja2 HTML-шаблон и заполняет контекстом."""
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        template_dir = os.path.join(base_dir, "template")
+        file_path = os.path.join(template_dir, template_name)
 
-        num_dog = self.deal_data.get("НомДоговора", "")
-        date_dog = self.deal_data.get("Дата", "")
-        summa = self.deal_data.get("СуммаДоговора", "500")
+        if not os.path.exists(file_path):
+            file_path = os.path.join(base_dir, template_name)
 
-        html = f"""
-        <html>
-        <head>
-            <style>
-                body {{ font-family: 'Times New Roman', serif; font-size: 12pt; margin: 20px; }}
-                h2 {{ text-align: center; margin-bottom: 5px; }}
-                .date-row {{ text-align: justify; margin-bottom: 20px; }}
-                p {{ text-align: justify; text-indent: 20px; margin-top: 5px; margin-bottom: 5px; }}
-                .signatures {{ margin-top: 40px; width: 100%; }}
-            </style>
-        </head>
-        <body>
-            <h2>ДОГОВОР № {num_dog}</h2>
-            <h3 style="text-align: center;">об оказании платных медицинских услуг</h3>
-
-            <p class="date-row"><b>г. Нижний Новгород</b> <span style="float: right;"><b>{date_dog} г.</b></span></p>
-
-            <p>Медицинская организация, именуемая в дальнейшем «Исполнитель», с одной стороны, и 
-            <b>{fam} {nam} {otch}</b> ({birth} г.р.), паспорт: {p_ser} {p_nom}, выдан: {p_vidan},
-            именуемый(ая) в дальнейшем «Заказчик», заключили настоящий Договор о нижеследующем:</p>
-
-            <p><b>1. Предмет договора:</b> Исполнитель обязуется оказать Заказчику медицинские услуги по проведению медицинского освидетельствования на наличие медицинских противопоказаний к управлению транспортными средствами.</p>
-
-            <p><b>2. Стоимость услуг:</b> Стоимость оказываемых услуг по настоящему Договору составляет <b>{summa} рублей</b>. Оплата производится Заказчиком в полном объеме при подписании Договора.</p>
-
-            <p><b>3. Адрес и реквизиты сторон:</b></p>
-
-            <table style="width: 100%; margin-top: 20px;">
-                <tr>
-                    <td style="width: 50%; vertical-align: top;">
-                        <b>Исполнитель:</b><br>
-                        Медицинский центр «МИГ»<br>
-                        г. Нижний Новгород<br>
-                        Подпись: _________________
-                    </td>
-                    <td style="width: 50%; vertical-align: top;">
-                        <b>Заказчик:</b><br>
-                        {fam} {nam} {otch}<br>
-                        Паспорт: {p_ser} {p_nom}<br>
-                        Подпись: _________________
-                    </td>
-                </tr>
-            </table>
-        </body>
-        </html>
-        """
-        return html
-
-    def render_doc_to_printer(self, printer: QPrinter):
-        """Рендерит документ на выбранный принтер."""
-        doc = QTextDocument()
-        doc.setHtml(self.generate_contract_html())
-        doc.setPageSize(printer.pageRect(QPrinter.Unit.Point).size())
-        doc.print(printer)
-
-    def print_contract(self):
-        """Прямая печать Договора через системный диалог выбора принтера."""
-        printer = QPrinter(QPrinter.PrinterMode.HighResolution)
-        printer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
-
-        dialog = QPrintDialog(printer, self)
-        dialog.setWindowTitle("Печать договора")
-
-        if dialog.exec() == QPrintDialog.DialogCode.Accepted:
-            self.render_doc_to_printer(printer)
-            QMessageBox.information(
-                self, "Успех", "Документ отправлен на печать!"
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(
+                f"Шаблон '{template_name}' не найден по пути: {file_path}"
             )
 
-    def preview_contract(self):
-        """Предпросмотр документа перед отправкой на физический принтер."""
-        printer = QPrinter(QPrinter.PrinterMode.HighResolution)
-        printer.setPageSize(QPageSize(QPageSize.PageSizeId.A4))
+        with open(file_path, "r", encoding="utf-8") as f:
+            template_str = f.read()
 
-        preview = QPrintPreviewDialog(printer, self)
-        preview.setWindowTitle("Предпросмотр документа")
-        preview.paintRequested.connect(self.render_doc_to_printer)
-        preview.exec()
+        template = Template(template_str)
+        return template.render(doc=self.doc_context)
 
-    def print_certificate(self):
-        """Печать медицинской справки ГИБДД (позиционирование текста поверх готового бланка)."""
+    def _clean_html_for_qt(self, html: str) -> str:
+        """Очищает стили, мешающие многостраничной разметке QTextDocument."""
+        cleaned = re.sub(r'height\s*:\s*100\s*(?:%|vh)\s*;?', '', html)
+        cleaned = re.sub(r'display\s*:\s*flex\s*;?', 'display: block;', cleaned)
+        cleaned = re.sub(r'flex-direction\s*:\s*column\s*;?', '', cleaned)
+        cleaned = re.sub(r'justify-content\s*:\s*space-between\s*;?', '', cleaned)
+        return cleaned
+
+    def _print_html_direct(
+            self,
+            html_content: str,
+            doc_title: str,
+            page_size=QPageSize.PageSizeId.A5,
+            orientation=QPageLayout.Orientation.Portrait
+    ):
+        """Прямая печать с принудительными безопасными отступами на уровне принтера."""
+        from PyQt6.QtCore import QSizeF, QMarginsF
+        from PyQt6.QtGui import QPageLayout
+
         printer = QPrinter(QPrinter.PrinterMode.HighResolution)
-        printer.setPageSize(QPageSize(QPageSize.PageSizeId.A5))
+        printer.setPageSize(QPageSize(page_size))
+        printer.setPageOrientation(orientation)
+
+        # Принудительно задаем отступы (в миллиметрах) на уровне драйвера принтера.
+        # 10 мм слева и справа гарантированно выведут текст из мертвой зоны роликов.
+        safe_layout = QPageLayout(
+            QPageSize(page_size),
+            orientation,
+            QMarginsF(30.0, 8.0, 30.0, 8.0),  # Лево, Верх, Право, Низ в мм
+            QPageLayout.Unit.Millimeter
+        )
+        printer.setPageLayout(safe_layout)
 
         dialog = QPrintDialog(printer, self)
-        dialog.setWindowTitle("Печать на бланке справки")
+        dialog.setWindowTitle(f"Печать: {doc_title}")
 
         if dialog.exec() == QPrintDialog.DialogCode.Accepted:
-            painter = QPainter()
-            if painter.begin(printer):
-                font = QFont("Times New Roman", 10)
-                painter.setFont(font)
+            document = QTextDocument()
+            safe_html = self._clean_html_for_qt(html_content)
+            document.setHtml(safe_html)
 
-                fam = self.client_data.get("Фамилия", "")
-                nam = self.client_data.get("Имя", "")
-                otch = self.client_data.get("Отчество", "")
-                birth = self.client_data.get("ДатаРождения", "")
-                address = f"{self.client_data.get('Город', '')}, ул. {self.client_data.get('Улица', '')}, d. {self.client_data.get('Дом', '')}"
+            rect = printer.pageLayout().paintRectPoints()
+            document.setPageSize(QSizeF(rect.width(), rect.height()))
 
-                # Печать значений в нужные координаты бланка (X, Y)
-                painter.drawText(150, 100, f"{fam} {nam} {otch}")
-                painter.drawText(150, 130, birth)
-                painter.drawText(150, 160, address)
-                painter.drawText(
-                    150, 200, f"Категории: {self.deal_data.get('КатегорияТС', 'B')}"
+            document.print(printer)
+
+    def _print_batch_templates(
+        self,
+        template_names: list,
+        batch_title: str,
+        page_size=QPageSize.PageSizeId.A5,
+        orientation=QPageLayout.Orientation.Portrait
+    ):
+        """Пакетная печать документов с разрывом страниц и заданной ориентацией."""
+        printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+        printer.setPageSize(QPageSize(page_size))
+        printer.setPageOrientation(orientation)
+        printer.setFullPage(True)
+
+        dialog = QPrintDialog(printer, self)
+        dialog.setWindowTitle(f"Печать: {batch_title}")
+
+        if dialog.exec() == QPrintDialog.DialogCode.Accepted:
+            try:
+                document = QTextDocument()
+                cursor = QTextCursor(document)
+
+                for i, t_name in enumerate(template_names):
+                    if i > 0:
+                        block_fmt = QTextBlockFormat()
+                        block_fmt.setPageBreakPolicy(QTextFormat.PageBreakFlag.PageBreak_AlwaysBefore)
+                        cursor.insertBlock(block_fmt)
+
+                    html = self._render_template_to_html(t_name)
+                    safe_html = self._clean_html_for_qt(html)
+                    cursor.insertHtml(safe_html)
+
+                document.print(printer)
+            except Exception as e:
+                QMessageBox.critical(
+                    self,
+                    "Ошибка печати",
+                    f"Не удалось напечатать '{batch_title}':\n{e}",
                 )
 
-                painter.end()
-                QMessageBox.information(
-                    self, "Успех", "Справка отправлена на печать!"
-                )
+    # ==============================================================================
+    # ОБРАБОТЧИКИ КНОПОК ПЕЧАТИ
+    # ==============================================================================
+
+    def print_dogovor(self):
+        try:
+            html = self._render_template_to_html("template_dogovor.html")
+            self._print_html_direct(
+                html,
+                "Договор",
+                page_size=QPageSize.PageSizeId.A5,
+                orientation=QPageLayout.Orientation.Portrait
+            )
+        except Exception as e:
+            QMessageBox.critical(
+                self, "Ошибка печати", f"Не удалось напечатать Договор:\n{e}"
+            )
+
+    def print_sogl_opd(self):
+        try:
+            html = self._render_template_to_html("template_agree.html")
+            self._print_html_direct(
+                html,
+                "Согласие на ОПД",
+                page_size=QPageSize.PageSizeId.A4,
+                orientation=QPageLayout.Orientation.Portrait
+            )
+        except Exception as e:
+            QMessageBox.critical(
+                self, "Ошибка печати", f"Не удалось напечатать Согласие:\n{e}"
+            )
+
+    def print_med_karta(self):
+        try:
+            html = self._render_template_to_html("template_medkarta.html")
+            # Медкарта печатается альбомно (Landscape)
+            self._print_html_direct(
+                html,
+                "МедКарта",
+                page_size=QPageSize.PageSizeId.A5,
+                orientation=QPageLayout.Orientation.Landscape
+            )
+        except Exception as e:
+            QMessageBox.critical(
+                self, "Ошибка печати", f"Не удалось напечатать МедКарту:\n{e}"
+            )
+
+    def print_docs_narkolog(self):
+        templates = [
+            "template_medkarta_nark.html",
+            "template_dogovor_narkolog.html",
+            "template_doc_narkolog_combo.html",
+        ]
+        self._print_batch_templates(
+            templates,
+            "Документы Нарколог",
+            page_size=QPageSize.PageSizeId.A5,
+            orientation=QPageLayout.Orientation.Portrait
+        )
+
+    def print_docs_psih(self):
+        templates = [
+            "template_medkarta_psych.html",
+            "template_osmotr_psych.html",
+            "template_dover_psych.html",
+            "template_agree_psych.html",
+        ]
+        self._print_batch_templates(
+            templates,
+            "Документы Психиатр",
+            page_size=QPageSize.PageSizeId.A5,
+            orientation=QPageLayout.Orientation.Portrait
+        )
+
+    def print_pso(self):
+        try:
+            html = self._render_template_to_html("template_pso.html")
+            self._print_html_direct(
+                html,
+                "ПСО",
+                page_size=QPageSize.PageSizeId.A5,
+                orientation=QPageLayout.Orientation.Portrait
+            )
+        except Exception as e:
+            QMessageBox.critical(
+                self, "Ошибка печати", f"Не удалось напечатать ПСО:\n{e}"
+            )

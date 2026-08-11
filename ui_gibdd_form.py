@@ -71,7 +71,7 @@ class GibddFormDialog(QDialog):
 
         grid_layout = QGridLayout()
 
-        # КОЛОНКА 1
+        # КОЛОНКА 1: ЛИЧНЫЕ ДАННЫЕ
         box_personal = QGroupBox("1. Личные данные")
         form_personal = QFormLayout(box_personal)
 
@@ -101,7 +101,7 @@ class GibddFormDialog(QDialog):
         form_personal.addRow("Серия паспорта:", self.field_ser_p)
         form_personal.addRow("Номер паспорта:", self.field_nom_p)
 
-        # КОЛОНКА 2
+        # КОЛОНКА 2: АДРЕС И ПАСПОРТ
         box_address = QGroupBox("2. Адрес и Паспорт")
         form_address = QFormLayout(box_address)
 
@@ -128,7 +128,7 @@ class GibddFormDialog(QDialog):
         form_address.addRow("Дом:", self.field_dom)
         form_address.addRow("Квартира:", self.field_kv)
 
-        # КОЛОНКА 3
+        # КОЛОНКА 3: ДЕТАЛИ СПРАВКИ
         box_deal = QGroupBox("3. Детали справки")
         form_deal = QFormLayout(box_deal)
 
@@ -177,7 +177,7 @@ class GibddFormDialog(QDialog):
         main_layout.addLayout(grid_layout)
         self.refresh_combo_boxes()
 
-        # НИЖНЯЯ ПАНЕЛЬ
+        # НИЖНЯЯ ПАНЕЛЬ С КНОПКАМИ
         btn_box = QHBoxLayout()
         btn_save_print = QPushButton("🖨️ Сохранить и Печать (Ctrl+Enter)")
         btn_save_print.setStyleSheet("font-size: 13px; font-weight: bold; padding: 10px 20px;")
@@ -235,8 +235,12 @@ class GibddFormDialog(QDialog):
             self.found_clients_map[display_text] = c
 
         self.completer_model.setStringList(suggestions)
+
         if suggestions:
+            # Принудительно отображаем окно комплетера
+            self.completer.setCompletionMode(QCompleter.CompletionMode.UnfilteredPopupCompletion)
             self.completer.complete()
+
         self._block_search_signal = False
 
     def on_client_selected(self, selected_text: str):
