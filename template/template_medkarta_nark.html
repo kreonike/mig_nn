@@ -7,18 +7,27 @@
         size: A5 portrait;
         margin: 5mm 8mm 5mm 8mm;
     }
+    html, body {
+        height: 100%;
+        margin: 0;
+        padding: 0;
+    }
     body {
         font-family: 'Times New Roman', serif;
-        font-size: 7.5pt;
-        line-height: 1.15;
+        font-size: 5.5pt;
+        line-height: 1.2;
         color: #000;
+    }
+    .page-container {
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        height: 100%;
+        box-sizing: border-box;
     }
     p {
         text-align: justify;
-        margin: 0 0 1mm 0;
-    }
-    .page-break {
-        page-break-after: always;
+        margin: 0 0 1.5mm 0;
     }
     .underline {
         border-bottom: 1px solid #000;
@@ -26,12 +35,6 @@
         font-weight: bold;
         padding: 0 3px;
         text-align: center;
-    }
-    .title {
-        text-align: center;
-        font-weight: bold;
-        font-size: 8.5pt;
-        margin-bottom: 1.5mm;
     }
     .header-table {
         width: 100%;
@@ -45,94 +48,106 @@
     .title-block {
         text-align: center;
         font-weight: bold;
-        font-size: 8pt;
-        margin: 2mm 0 1.5mm 0;
+        font-size: 8.5pt;
+        margin: 2mm 0 2mm 0;
     }
     .grid-table {
         width: 100%;
         border-collapse: collapse;
-        margin-top: 1.5mm;
+        margin-top: 2mm;
     }
     .grid-table th, .grid-table td {
         border: 1px solid #000;
-        padding: 2px;
+        padding: 3px 2px;
         text-align: center;
-        font-size: 6.5pt;
+        font-size: 6.8pt;
+    }
+    .bottom-block {
+        margin-top: auto;
     }
 </style>
 </head>
 <body>
-    <table class="header-table" border="0" cellspacing="0" cellpadding="0">
-        <tr>
-            <td width="60%" align="left">
-                Наименование медицинской организации<br/>
-                <b>ГБУЗ НО «Нижегородский областной наркологический диспансер»</b><br/><br/>
-                Адрес <b>603000, г. Нижний Новгород, ул. Ильинская, д. 78 а</b>
-            </td>
-            <td width="40%" align="right">
-                Код формы по ОКУ ___________<br/>
-                Код организации по ОКПО ______<br/>
-                Учетная форма N 025/у<br/>
-                Утверждена приказом МЗ РФ<br/>
-                от 15.12.2014 N 834н
-            </td>
-        </tr>
-    </table>
 
-    <div class="title-block">
-        МЕДИЦИНСКАЯ КАРТА<br/>
-        ПАЦИЕНТА, ПОЛУЧАЮЩЕГО МЕДИЦИНСКУЮ ПОМОЩЬ В АМБУЛАТОРНЫХ УСЛОВИЯХ N <span class="underline" style="min-width: 60px;">{{ doc.НомДоговора }}</span>
+<div class="page-container">
+    <div>
+        <table class="header-table" border="0" cellspacing="0" cellpadding="0">
+            <tr>
+                <td width="60%" align="left">
+                    Наименование медицинской организации<br/>
+                    <b>ГБУЗ НО «Нижегородский областной наркологический диспансер»</b><br/><br/>
+                    Адрес <b>603000, г. Нижний Новгород, ул. Ильинская, д. 78 а</b>
+                </td>
+                <td width="40%" align="right">
+                    Код формы по ОКУ ___________<br/>
+                    Код организации по ОКПО ______<br/>
+                    Учетная форма N 025/у<br/>
+                    Утверждена приказом МЗ РФ<br/>
+                    от 15.12.2014 N 834н
+                </td>
+            </tr>
+        </table>
+
+        <div class="title-block">
+            МЕДИЦИНСКАЯ КАРТА<br/>
+            ПАЦИЕНТА, ПОЛУЧАЮЩЕГО МЕДИЦИНСКУЮ ПОМОЩЬ В АМБУЛАТОРНЫХ УСЛОВИЯХ N <span class="underline" style="min-width: 60px;">{{ doc.НомДоговора }}</span>
+        </div>
+
+        {% set d_parts = doc.Дата.split('.') if doc.Дата and '.' in doc.Дата else ['10', '08', '2026'] %}
+        {% set months = {'01':'Января','02':'Февраля','03':'Матра','04':'Апреля','05':'Мая','06':'Июня','07':'Июля','08':'Августа','09':'Сентября','10':'Октября','11':'Ноября','12':'Декабря'} %}
+
+        <p>
+            1. Дата заполнения: число <span class="underline" style="min-width: 25px;">{{ d_parts[0] }}</span>
+            Месяц <span class="underline" style="min-width: 60px;">{{ months.get(d_parts[1], 'Августа') }}</span>
+            Год <span class="underline" style="min-width: 40px;">{{ d_parts[2] if d_parts|length > 2 else '2026' }}</span>
+        </p>
+
+        <p>2. ФИО: <span class="underline" style="width: 80%; text-align: left;">{{ doc.Фамилия }} {{ doc.Имя }} {{ doc.Отчество }}</span></p>
+
+        {% set b_parts = doc.ДатаРождения.split('.') if doc.ДатаРождения and '.' in doc.ДатаРождения else ['01', '01', '1980'] %}
+
+        <p>
+            3. Пол: <span class="underline" style="min-width: 60px;">{{ doc.Пол }}</span>
+            4. Дата рождения: число <span class="underline" style="min-width: 25px;">{{ b_parts[0] }}</span>
+            Месяц <span class="underline" style="min-width: 60px;">{{ months.get(b_parts[1], '') }}</span>
+            Год <span class="underline" style="min-width: 40px;">{{ b_parts[2] if b_parts|length > 2 else '' }}</span>
+        </p>
+
+        <p>5. Место регистрации: <span class="underline" style="min-width: 120px;">{{ doc.Область }}</span>, <span class="underline" style="min-width: 100px;">{{ doc.Город }}</span></p>
+        <p>улица <span class="underline" style="min-width: 180px; text-align: left;">{{ doc.Улица }}</span> д. <span class="underline" style="min-width: 25px;">{{ doc.Дом }}</span> кв. <span class="underline" style="min-width: 25px;">{{ doc.Квартира }}</span></p>
+
+        <p>6. Местность: <span class="underline" style="min-width: 80px;">городская</span></p>
+        <p>7. Паспорт: серия <span class="underline" style="min-width: 45px;">{{ doc.СерПасп }}</span> N <span class="underline" style="min-width: 65px;">{{ doc.ПспНом }}</span></p>
     </div>
 
-    {% set d_parts = doc.Дата.split('.') if doc.Дата and '.' in doc.Дата else ['10', '08', '2026'] %}
-    {% set months = {'01':'Января','02':'Февраля','03':'Матра','04':'Апреля','05':'Мая','06':'Июня','07':'Июля','08':'Августа','09':'Сентября','10':'Октября','11':'Ноября','12':'Декабря'} %}
+    <div class="bottom-block">
+        <p>12. Заболевания, по поводу которых осуществляется диспансерное наблюдение:</p>
 
-    <p>
-        1. Дата заполнения: число <span class="underline" style="min-width: 20px;">{{ d_parts[0] }}</span>
-        Месяц <span class="underline" style="min-width: 50px;">{{ months.get(d_parts[1], 'Августа') }}</span>
-        Год <span class="underline" style="min-width: 35px;">{{ d_parts[2] if d_parts|length > 2 else '2026' }}</span>
-    </p>
+        <table class="grid-table">
+            <thead>
+                <tr>
+                    <th width="15%">Дата начала</th>
+                    <th width="15%">Дата прекр.</th>
+                    <th width="40%">Диагноз</th>
+                    <th width="12%">МКБ-10</th>
+                    <th width="18%">Врач</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><b>{{ doc.Дата }}</b></td>
+                    <td>&nbsp;</td>
+                    <td>&nbsp;</td>
+                    <td>&nbsp;</td>
+                    <td>&nbsp;</td>
+                </tr>
+                <tr><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+                <tr><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+                <tr><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
 
-    <p>2. ФИО: <span class="underline" style="width: 80%; text-align: left;">{{ doc.Фамилия }} {{ doc.Имя }} {{ doc.Отчество }}</span></p>
-
-    {% set b_parts = doc.ДатаРождения.split('.') if doc.ДатаРождения and '.' in doc.ДатаРождения else ['01', '01', '1980'] %}
-
-    <p>
-        3. Пол: <span class="underline" style="min-width: 50px;">{{ doc.Пол }}</span>
-        4. Дата рождения: число <span class="underline" style="min-width: 20px;">{{ b_parts[0] }}</span>
-        Месяц <span class="underline" style="min-width: 50px;">{{ months.get(b_parts[1], '') }}</span>
-        Год <span class="underline" style="min-width: 35px;">{{ b_parts[2] if b_parts|length > 2 else '' }}</span>
-    </p>
-
-    <p>5. Место регистрации: <span class="underline" style="min-width: 120px;">{{ doc.Область }}</span>, <span class="underline" style="min-width: 100px;">{{ doc.Город }}</span></p>
-    <p>улица <span class="underline" style="min-width: 180px; text-align: left;">{{ doc.Улица }}</span> д. <span class="underline" style="min-width: 25px;">{{ doc.Дом }}</span> кв. <span class="underline" style="min-width: 25px;">{{ doc.Квартира }}</span></p>
-
-    <p>6. Местность: <span class="underline" style="min-width: 80px;">городская</span></p>
-    <p>7. Паспорт: серия <span class="underline" style="min-width: 45px;">{{ doc.СерПасп }}</span> N <span class="underline" style="min-width: 65px;">{{ doc.ПспНом }}</span></p>
-
-    <p style="margin-top: 1.5mm;">12. Заболевания, по поводу которых осуществляется диспансерное наблюдение:</p>
-
-    <table class="grid-table">
-        <thead>
-            <tr>
-                <th width="15%">Дата начала</th>
-                <th width="15%">Дата прекр.</th>
-                <th width="40%">Диагноз</th>
-                <th width="12%">МКБ-10</th>
-                <th width="18%">Врач</th>
-            </tr>
-        </thead>
-        <tbody>
-            <tr>
-                <td><b>{{ doc.Дата }}</b></td>
-                <td>&nbsp;</td>
-                <td>&nbsp;</td>
-                <td>&nbsp;</td>
-                <td>&nbsp;</td>
-            </tr>
-            <tr><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>
-            <tr><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>
-        </tbody>
-    </table>
 </body>
 </html>

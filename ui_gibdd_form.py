@@ -1,5 +1,5 @@
 from datetime import datetime
-from PyQt6.QtCore import QDate, QStringListModel, Qt
+from PyQt6.QtCore import QDate, QStringListModel, Qt, QTimer
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -32,7 +32,11 @@ class GibddFormDialog(QDialog):
         self.current_client_id = None
         self.found_clients_map = {}
         self._block_search_signal = False
-        self.presets_data = []
+
+        self.search_timer = QTimer(self)
+        self.search_timer.setSingleShot(True)
+        self.search_timer.setInterval(200)
+        self.search_timer.timeout.connect(self._execute_search)
 
         self.init_ui()
         self.create_new_deal_number()
@@ -41,30 +45,23 @@ class GibddFormDialog(QDialog):
     def init_ui(self):
         main_layout = QVBoxLayout(self)
 
-        # ---------------- 1. УМНЫЙ ПОИСК ПАЦИЕНТА ----------------
         search_box = QHBoxLayout()
         search_label = QLabel("🔍 Поиск пациента:")
         search_label.setStyleSheet("font-weight: bold;")
 
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText(
-            "ФИО, паспорт ('соля'), инициалы ('сдг') или с датой ('сдг11121981')..."
-        )
+        self.search_input.setPlaceholderText("Начните вводить ФИО (например, 'соля')...")
 
         self.completer_model = QStringListModel(self)
         self.completer = QCompleter(self.completer_model, self)
         self.completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self.completer.setCompletionMode(QCompleter.CompletionMode.UnfilteredPopupCompletion)
 
-        # Включаем нефильтруемый режим выпадающего списка для работы алгоритма из database.py
-        self.completer.setCompletionMode(
-            QCompleter.CompletionMode.UnfilteredPopupCompletion
-        )
         self.search_input.setCompleter(self.completer)
-
         self.search_input.textEdited.connect(self.on_search_text_edited)
         self.completer.activated.connect(self.on_client_selected)
 
-        btn_clear = QPushButton("✨ Новый пациент (Очистить)")
+        btn_clear = QPushButton("✨ Новый пациент")
         btn_clear.clicked.connect(self.clear_patient_fields)
 
         search_box.addWidget(search_label)
@@ -72,17 +69,14 @@ class GibddFormDialog(QDialog):
         search_box.addWidget(btn_clear)
         main_layout.addLayout(search_box)
 
-        # ---------------- 2. ТРЕХКОЛОНОЧНЫЙ МАКЕТ ----------------
         grid_layout = QGridLayout()
 
-        # === КОЛОНКА 1: ЛИЧНЫЕ ДАННЫЕ ===
+        # КОЛОНКА 1: ЛИЧНЫЕ ДАННЫЕ
         box_personal = QGroupBox("1. Личные данные")
         form_personal = QFormLayout(box_personal)
 
         self.field_id = QLineEdit()
         self.field_id.setReadOnly(True)
-        self.field_id.setPlaceholderText("Авто")
-
         self.field_fam = QLineEdit()
         self.field_name = QLineEdit()
         self.field_otch = QLineEdit()
@@ -95,7 +89,6 @@ class GibddFormDialog(QDialog):
 
         self.field_ser_p = QLineEdit()
         self.field_ser_p.setInputMask("99 99;_")
-
         self.field_nom_p = QLineEdit()
         self.field_nom_p.setInputMask("999999;_")
 
@@ -108,26 +101,21 @@ class GibddFormDialog(QDialog):
         form_personal.addRow("Серия паспорта:", self.field_ser_p)
         form_personal.addRow("Номер паспорта:", self.field_nom_p)
 
-        # === КОЛОНКА 2: АДРЕС И ПАСПОРТ ===
+        # КОЛОНКА 2: АДРЕС И ПАСПОРТ
         box_address = QGroupBox("2. Адрес и Паспорт")
         form_address = QFormLayout(box_address)
 
         self.field_vidan = QComboBox()
         self.field_vidan.setEditable(True)
-
         self.field_date_vidan = QLineEdit()
         self.field_date_vidan.setInputMask("99.99.9999;_")
 
         self.field_oblast = QLineEdit("Нижегородская обл.")
         self.field_gorod = QLineEdit("г. Нижний Новгород")
-
         self.field_rayon = QComboBox()
         self.field_rayon.setEditable(True)
 
         self.field_ulica = QLineEdit()
-        self.field_ulica.setPlaceholderText("Начните вводить улицу...")
-        self.setup_street_completer()
-
         self.field_dom = QLineEdit()
         self.field_kv = QLineEdit()
 
@@ -140,7 +128,7 @@ class GibddFormDialog(QDialog):
         form_address.addRow("Дом:", self.field_dom)
         form_address.addRow("Квартира:", self.field_kv)
 
-        # === КОЛОНКА 3: ДЕТАЛИ СПРАВКИ И ОПЛАТА ===
+        # КОЛОНКА 3: ДЕТАЛИ СПРАВКИ
         box_deal = QGroupBox("3. Детали справки")
         form_deal = QFormLayout(box_deal)
 
@@ -151,9 +139,6 @@ class GibddFormDialog(QDialog):
         self.field_date_dog.setCalendarPopup(True)
         self.field_date_dog.setDate(QDate.currentDate())
         self.field_date_dog.setDisplayFormat("dd.MM.yyyy")
-
-        self.combo_preset = QComboBox()
-        self.combo_preset.currentIndexChanged.connect(self.on_preset_changed)
 
         self.field_cat = QLineEdit("B")
         self.field_summa = QLineEdit("500")
@@ -169,7 +154,6 @@ class GibddFormDialog(QDialog):
         spravka_layout = QHBoxLayout()
         self.field_spr_ser = QLineEdit("22")
         self.field_spr_num = QLineEdit()
-        self.field_spr_num.setPlaceholderText("№ Бланка")
         spravka_layout.addWidget(self.field_spr_ser)
         spravka_layout.addWidget(self.field_spr_num)
 
@@ -179,7 +163,6 @@ class GibddFormDialog(QDialog):
 
         form_deal.addRow("№ Договора:", self.field_num_dog)
         form_deal.addRow("Дата выписки:", self.field_date_dog)
-        form_deal.addRow("Тариф / Пресет:", self.combo_preset)
         form_deal.addRow("Категории ТС:*", self.field_cat)
         form_deal.addRow("Сумма (руб):", self.field_summa)
         form_deal.addRow("Врачи:", chk_layout)
@@ -191,63 +174,23 @@ class GibddFormDialog(QDialog):
         grid_layout.addWidget(box_address, 0, 1)
         grid_layout.addWidget(box_deal, 0, 2)
 
-        grid_layout.setColumnStretch(0, 1)
-        grid_layout.setColumnStretch(1, 1)
-        grid_layout.setColumnStretch(2, 1)
-
         main_layout.addLayout(grid_layout)
-
-        self.load_presets()
         self.refresh_combo_boxes()
 
-        # ---------------- 3. НИЖНЯЯ ПАНЕЛЬ С КНОПКАМИ ----------------
+        # НИЖНЯЯ ПАНЕЛЬ С КНОПКАМИ
         btn_box = QHBoxLayout()
-        lbl_hint = QLabel("💡 Ctrl+Enter — сохранить и перейти к печати")
-        lbl_hint.setStyleSheet("color: #666; font-style: italic;")
-
-        btn_save_print = QPushButton("💾 Сохранить и Печать (Ctrl+Enter)")
-        btn_save_print.setObjectName("primaryButton")
-        btn_save_print.setStyleSheet(
-            "font-size: 13px; font-weight: bold; padding: 10px 20px;"
-        )
+        btn_save_print = QPushButton("🖨️ Сохранить и Печать (Ctrl+Enter)")
+        btn_save_print.setStyleSheet("font-size: 13px; font-weight: bold; padding: 10px 20px;")
         btn_save_print.clicked.connect(self.save_and_print)
 
-        btn_close = QPushButton("Закрыть (Esc)")
+        btn_close = QPushButton("Закрыть")
         btn_close.clicked.connect(self.reject)
 
-        btn_box.addWidget(lbl_hint)
         btn_box.addStretch()
         btn_box.addWidget(btn_save_print)
         btn_box.addWidget(btn_close)
 
         main_layout.addLayout(btn_box)
-
-    def setup_street_completer(self):
-        streets = database.get_streets_list()
-        street_completer = QCompleter(streets, self)
-        street_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        street_completer.setFilterMode(Qt.MatchFlag.MatchContains)
-        self.field_ulica.setCompleter(street_completer)
-
-    def load_presets(self):
-        self.presets_data = database.get_presets_list("ГИБДД")
-        self.combo_preset.blockSignals(True)
-        self.combo_preset.clear()
-
-        for p in self.presets_data:
-            name = p.get("Название", "")
-            cats = p.get("Категории", "")
-            price = p.get("Сумма", 0)
-            self.combo_preset.addItem(f"{name} ({cats}) — {int(price)} руб.", p)
-
-        self.combo_preset.addItem("Свой выбор / Ручной ввод", None)
-        self.combo_preset.blockSignals(False)
-
-    def on_preset_changed(self, index: int):
-        data = self.combo_preset.currentData()
-        if data:
-            self.field_cat.setText(str(data.get("Категории", "B")))
-            self.field_summa.setText(str(int(data.get("Сумма", 500))))
 
     def setup_shortcuts(self):
         shortcut_save = QShortcut(QKeySequence("Ctrl+Return"), self)
@@ -259,30 +202,18 @@ class GibddFormDialog(QDialog):
         self.field_vidan.clear()
         self.field_vidan.addItems(database.get_uvd_list())
 
-    def parse_and_format_date(self, raw_date_str: str) -> str:
-        if not raw_date_str or len(raw_date_str.strip()) < 8:
-            return ""
-        clean_str = raw_date_str.strip().split()[0]
-        if "-" in clean_str:
-            parts = clean_str.split("-")
-            if len(parts) == 3 and len(parts[0]) == 4:
-                return f"{parts[2].zfill(2)}{parts[1].zfill(2)}{parts[0]}"
-        if "." in clean_str:
-            parts = clean_str.split(".")
-            if len(parts) == 3:
-                return f"{parts[0].zfill(2)}{parts[1].zfill(2)}{parts[2]}"
-        return clean_str
-
     def create_new_deal_number(self):
         next_id = database.get_next_deal_number("Сделки")
         self.field_num_dog.setText(str(next_id))
         self.field_spr_num.clear()
 
     def on_search_text_edited(self, text: str):
-        """Умный поиск пациентов через алгоритм search_clients_for_completer."""
         if self._block_search_signal:
             return
-        query = text.strip()
+        self.search_timer.start()
+
+    def _execute_search(self):
+        query = self.search_input.text().strip()
         if not query:
             self.completer_model.setStringList([])
             return
@@ -304,8 +235,12 @@ class GibddFormDialog(QDialog):
             self.found_clients_map[display_text] = c
 
         self.completer_model.setStringList(suggestions)
+
         if suggestions:
+            # Принудительно отображаем окно комплетера
+            self.completer.setCompletionMode(QCompleter.CompletionMode.UnfilteredPopupCompletion)
             self.completer.complete()
+
         self._block_search_signal = False
 
     def on_client_selected(self, selected_text: str):
@@ -313,37 +248,20 @@ class GibddFormDialog(QDialog):
         if client:
             self.fill_client_data(client)
 
-    def set_combo_value(self, combo: QComboBox, text_val: str):
-        idx = combo.findText(text_val)
-        if idx >= 0:
-            combo.setCurrentIndex(idx)
-        else:
-            combo.setCurrentText(text_val)
-
     def fill_client_data(self, c: dict):
         self.current_client_id = c["id"]
         self.field_id.setText(str(c["id"]))
         self.field_fam.setText(str(c.get("Фамилия") or ""))
         self.field_name.setText(str(c.get("Имя") or ""))
         self.field_otch.setText(str(c.get("Отчество") or ""))
-
-        raw_birth = str(c.get("ДатаРождения") or "")
-        self.field_birth.setText(self.parse_and_format_date(raw_birth))
-
+        self.field_birth.setText(str(c.get("ДатаРождения") or ""))
         self.field_ser_p.setText(str(c.get("СерПасп") or ""))
         self.field_nom_p.setText(str(c.get("ПспНом") or ""))
-
-        self.set_combo_value(
-            self.field_vidan, str(c.get("ПаспортВыданМесто") or "")
-        )
-        self.field_date_vidan.setText(
-            self.parse_and_format_date(str(c.get("ДатаВыдачи") or ""))
-        )
-
+        self.field_vidan.setCurrentText(str(c.get("ПаспортВыданМесто") or ""))
+        self.field_date_vidan.setText(str(c.get("ДатаВыдачи") or ""))
         self.field_oblast.setText(str(c.get("Область") or "Нижегородская обл."))
         self.field_gorod.setText(str(c.get("Город") or "г. Нижний Новгород"))
-        self.set_combo_value(self.field_rayon, str(c.get("Район") or ""))
-
+        self.field_rayon.setCurrentText(str(c.get("Район") or ""))
         self.field_ulica.setText(str(c.get("Улица") or ""))
         self.field_dom.setText(str(c.get("Дом") or ""))
         self.field_kv.setText(str(c.get("Квартира") or ""))
@@ -353,9 +271,7 @@ class GibddFormDialog(QDialog):
             self.field_num_dog.setText(str(deal.get("НомДоговора")))
             self.field_summa.setText(str(deal.get("СуммаДоговора") or "500"))
             self.field_cat.setText(str(deal.get("КатегорияТС") or "B"))
-            self.field_spr_ser.setText(
-                str(deal.get("Выдана справкаСер") or "22")
-            )
+            self.field_spr_ser.setText(str(deal.get("Выдана справкаСер") or "22"))
             self.field_spr_num.setText(str(deal.get("ВыданаСправка№") or ""))
         else:
             self.create_new_deal_number()
@@ -370,17 +286,11 @@ class GibddFormDialog(QDialog):
         self.field_birth.clear()
         self.field_ser_p.clear()
         self.field_nom_p.clear()
-        self.field_vidan.setCurrentIndex(0)
         self.field_date_vidan.clear()
-        self.field_rayon.setCurrentIndex(0)
         self.field_ulica.clear()
         self.field_dom.clear()
         self.field_kv.clear()
         self.field_primech.clear()
-
-        self.field_cat.setText("B")
-        self.field_summa.setText("500")
-
         self.create_new_deal_number()
 
     def save_and_print(self):

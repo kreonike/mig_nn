@@ -1,4 +1,4 @@
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QDialog,
@@ -24,6 +24,12 @@ class PatientSearchDialog(QDialog):
         self.setWindowTitle("Поиск пациентов и выписка справок")
         self.resize(1000, 600)
 
+        # Таймер для задержки быстрого ввода (200 мс)
+        self.search_timer = QTimer(self)
+        self.search_timer.setSingleShot(True)
+        self.search_timer.setInterval(200)
+        self.search_timer.timeout.connect(self._execute_search)
+
         layout = QVBoxLayout(self)
 
         # Поиск
@@ -33,7 +39,7 @@ class PatientSearchDialog(QDialog):
         self.search_input.setPlaceholderText(
             "Введите минимум 2 символа для начала поиска..."
         )
-        self.search_input.textChanged.connect(self.on_search)
+        self.search_input.textChanged.connect(self.on_search_text_changed)
         search_layout.addWidget(self.search_input)
 
         layout.addLayout(search_layout)
@@ -71,13 +77,16 @@ class PatientSearchDialog(QDialog):
 
         self.current_results = []
 
-    def on_search(self, text: str):
-        query = text.strip()
+    def on_search_text_changed(self, text: str):
+        self.search_timer.start()
+
+    def _execute_search(self):
+        query = self.search_input.text().strip()
         if len(query) < 2:
             self.table.setRowCount(0)
             return
 
-        self.current_results = database.search_clients(query)
+        self.current_results = database.search_clients_for_completer(query, limit=150)
         self.table.setRowCount(len(self.current_results))
 
         for row, c in enumerate(self.current_results):

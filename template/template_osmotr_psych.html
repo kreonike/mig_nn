@@ -1,0 +1,59 @@
+<html>
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+    <title>Осмотр Психиатра</title>
+    <style>
+        @page { size: A5 portrait; margin: 6mm 8mm 6mm 8mm; }
+        html, body { height: 100%; margin: 0; padding: 0; }
+        body { font-family: 'Times New Roman', serif; font-size: 8pt; line-height: 1.25; color: #000; }
+        .page-container {
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            height: 100%;
+            box-sizing: border-box;
+        }
+        p { text-align: justify; margin: 0 0 2mm 0; }
+        .title { text-align: center; font-weight: bold; font-size: 9.5pt; margin-bottom: 2mm; }
+        .underline { border-bottom: 1px solid #000; display: inline-block; font-weight: bold; padding: 0 3px; }
+        .bottom-block { margin-top: auto; padding-top: 3mm; }
+    </style>
+</head>
+<body>
+
+<div class="page-container">
+    <div>
+        <div class="title">Медицинский осмотр врача-психиатра</div>
+        <div align="right" style="margin-bottom: 3mm;">Медицинская карта № <span class="underline" style="min-width: 60px;">{{ doc.НомДоговора }}</span></div>
+
+        <p><b>Ф.И.О.:</b> <span class="underline" style="width: 85%;">{{ doc.Фамилия }} {{ doc.Имя }} {{ doc.Отчество }}</span></p>
+        <p><b>Дата рождения:</b> <span class="underline">{{ doc.ДатаРождения }}</span></p>
+        <p><b>Домашний адрес:</b> <span class="underline" style="width: 73%;">{{ doc.Область }}, {{ doc.Город }}, ул. {{ doc.Улица }}, д. {{ doc.Дом }}, кв. {{ doc.Квартира }}</span></p>
+        <p><b>Фактический адрес:</b> <span class="underline" style="width: 71%;">{{ doc.Область }}, {{ doc.Город }}, ул. {{ doc.Улица }}, д. {{ doc.Дом }}, кв. {{ doc.Квартира }}</span></p>
+
+        <p style="margin-top: 3mm;">На учете у психиатров: <b>не состоит</b>.</p>
+        <p>ЧМТ в анамнезе: отсутствуют. Судорожные припадки: отсутствуют.</p>
+
+        <div style="text-align: center; font-weight: bold; margin: 3mm 0 1.5mm 0;">ПСИХИЧЕСКИЙ СТАТУС</div>
+        <p>Жалоб активно не предъявляет. Ориентировка всех видов сохранена в полном объеме. Мышление логичное, последовательное. Когнитивных нарушений не выявлено. Настроение ровное, стабильное. Эмоциональные реакции адекватные.</p>
+        <p>Психических расстройств на момент осмотра не выявлено. Критические и прогностические способности сохранены.</p>
+
+        <p style="margin-top: 3mm;"><b>ЗАКЛЮЧЕНИЕ:</b> Противопоказаний к управлению ТС / владению оружием <b>не выявлено</b>.</p>
+    </div>
+
+    <div class="bottom-block">
+        <table width="100%" border="0">
+            <tr>
+                <td width="35%"><b>Врач-психиатр:</b></td>
+                <td width="65%" align="right">__________________ / Лещева Н.Г. /</td>
+            </tr>
+            <tr>
+                <td style="padding-top: 4mm;">Дата: <b>«{{ doc.Дата }}»г.</b></td>
+                <td>&nbsp;</td>
+            </tr>
+        </table>
+    </div>
+</div>
+
+</body>
+</html>
