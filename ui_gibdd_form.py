@@ -28,7 +28,7 @@ class GibddFormDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("🚗 Оформление справки ГИБДД")
-        self.resize(1000, 620)
+        self.resize(1000, 650)
         self.current_client_id = None
         self.found_clients_map = {}
         self._block_search_signal = False
@@ -132,6 +132,10 @@ class GibddFormDialog(QDialog):
         box_deal = QGroupBox("3. Детали справки")
         form_deal = QFormLayout(box_deal)
 
+        # Выбор пресетов/тарифов
+        self.combo_preset = QComboBox()
+        self.combo_preset.currentIndexChanged.connect(self.on_preset_changed)
+
         self.field_num_dog = QLineEdit()
         self.field_num_dog.setReadOnly(True)
 
@@ -161,6 +165,7 @@ class GibddFormDialog(QDialog):
         self.field_primech = QTextEdit()
         self.field_primech.setMaximumHeight(60)
 
+        form_deal.addRow("Тариф / Пресет:", self.combo_preset)
         form_deal.addRow("№ Договора:", self.field_num_dog)
         form_deal.addRow("Дата выписки:", self.field_date_dog)
         form_deal.addRow("Категории ТС:*", self.field_cat)
@@ -202,6 +207,29 @@ class GibddFormDialog(QDialog):
         self.field_vidan.clear()
         self.field_vidan.addItems(database.get_uvd_list())
 
+        # Загрузка пресетов из БД
+        self.combo_preset.clear()
+        self.combo_preset.addItem("— Выберите пресет —", None)
+        presets = database.get_presets_list("ГИБДД")
+        for p in presets:
+            title = p.get("Название") or p.get("title") or ""
+            cats = p.get("Категории") or p.get("categories") or ""
+            price = p.get("Сумма") if "Сумма" in p else p.get("price", 0)
+
+            label = f"{title} [{cats}] — {price} руб."
+            self.combo_preset.addItem(label, p)
+
+    def on_preset_changed(self, index: int):
+        preset = self.combo_preset.currentData()
+        if preset:
+            cats = preset.get("Категории") or preset.get("categories") or ""
+            price = preset.get("Сумма") if "Сумма" in preset else preset.get("price", 0)
+
+            if cats:
+                self.field_cat.setText(str(cats))
+            if price is not None:
+                self.field_summa.setText(str(price))
+
     def create_new_deal_number(self):
         next_id = database.get_next_deal_number("Сделки")
         self.field_num_dog.setText(str(next_id))
@@ -237,7 +265,6 @@ class GibddFormDialog(QDialog):
         self.completer_model.setStringList(suggestions)
 
         if suggestions:
-            # Принудительно отображаем окно комплетера
             self.completer.setCompletionMode(QCompleter.CompletionMode.UnfilteredPopupCompletion)
             self.completer.complete()
 
@@ -291,6 +318,7 @@ class GibddFormDialog(QDialog):
         self.field_dom.clear()
         self.field_kv.clear()
         self.field_primech.clear()
+        self.combo_preset.setCurrentIndex(0)
         self.create_new_deal_number()
 
     def save_and_print(self):
