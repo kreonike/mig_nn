@@ -96,14 +96,14 @@ class PrintMenuDialog(QDialog):
         cleaned = re.sub(r'justify-content\s*:\s*space-between\s*;?', '', cleaned)
         return cleaned
 
-    def _print_batch_templates(
+    def _print_html_direct(
             self,
-            template_names: list,
-            batch_title: str,
+            html_content: str,
+            doc_title: str,
             page_size=QPageSize.PageSizeId.A5,
             orientation=QPageLayout.Orientation.Portrait
     ):
-        """Пакетная печать документов с разрывом страниц и безопасными отступами принтера."""
+        """Прямая печать одиночного документа с расширенными безопасными отступами."""
         from PyQt6.QtCore import QSizeF, QMarginsF
         from PyQt6.QtGui import QPageLayout
 
@@ -111,11 +111,48 @@ class PrintMenuDialog(QDialog):
         printer.setPageSize(QPageSize(page_size))
         printer.setPageOrientation(orientation)
 
-        # Устанавливаем такие же безопасные отступы, как для договора, чтобы поля не обрезались
+        # Увеличиваем боковые отступы до 34 мм, чтобы принтер гарантированно не задевал края
         safe_layout = QPageLayout(
             QPageSize(page_size),
             orientation,
-            QMarginsF(30.0, 8.0, 30.0, 8.0),  # Лево, Верх, Право, Низ в мм
+            QMarginsF(34.0, 7.0, 34.0, 7.0),  # Лево, Верх, Право, Низ в мм
+            QPageLayout.Unit.Millimeter
+        )
+        printer.setPageLayout(safe_layout)
+
+        dialog = QPrintDialog(printer, self)
+        dialog.setWindowTitle(f"Печать: {doc_title}")
+
+        if dialog.exec() == QPrintDialog.DialogCode.Accepted:
+            document = QTextDocument()
+            safe_html = self._clean_html_for_qt(html_content)
+            document.setHtml(safe_html)
+
+            rect = printer.pageLayout().paintRectPoints()
+            document.setPageSize(QSizeF(rect.width(), rect.height()))
+
+            document.print(printer)
+
+    def _print_batch_templates(
+            self,
+            template_names: list,
+            batch_title: str,
+            page_size=QPageSize.PageSizeId.A5,
+            orientation=QPageLayout.Orientation.Portrait
+    ):
+        """Пакетная печать документов с жестким разрывом страниц и безопасными отступами."""
+        from PyQt6.QtCore import QSizeF, QMarginsF
+        from PyQt6.QtGui import QPageLayout
+
+        printer = QPrinter(QPrinter.PrinterMode.HighResolution)
+        printer.setPageSize(QPageSize(page_size))
+        printer.setPageOrientation(orientation)
+
+        # Расширяем отступы для пакетной печати
+        safe_layout = QPageLayout(
+            QPageSize(page_size),
+            orientation,
+            QMarginsF(34.0, 7.0, 34.0, 7.0),  # Лево, Верх, Право, Низ в мм
             QPageLayout.Unit.Millimeter
         )
         printer.setPageLayout(safe_layout)
@@ -131,6 +168,7 @@ class PrintMenuDialog(QDialog):
                 for i, t_name in enumerate(template_names):
                     if i > 0:
                         block_fmt = QTextBlockFormat()
+                        # Гарантированный разрыв страницы перед каждым следующим шаблоном
                         block_fmt.setPageBreakPolicy(QTextFormat.PageBreakFlag.PageBreak_AlwaysBefore)
                         cursor.insertBlock(block_fmt)
 
@@ -156,7 +194,7 @@ class PrintMenuDialog(QDialog):
             page_size=QPageSize.PageSizeId.A5,
             orientation=QPageLayout.Orientation.Portrait
     ):
-        """Пакетная печать документов с разрывом страниц и безопасными отступами (как у договора)."""
+        """Пакетная печать документов с разрывом страниц и безопасными отступами."""
         from PyQt6.QtCore import QSizeF, QMarginsF
         from PyQt6.QtGui import QPageLayout
 
@@ -164,11 +202,10 @@ class PrintMenuDialog(QDialog):
         printer.setPageSize(QPageSize(page_size))
         printer.setPageOrientation(orientation)
 
-        # Принудительно задаем точно такие же защитные отступы, как у основного договора
         safe_layout = QPageLayout(
             QPageSize(page_size),
             orientation,
-            QMarginsF(30.0, 8.0, 30.0, 8.0),  # Лево, Верх, Право, Низ в мм
+            QMarginsF(30.0, 8.0, 30.0, 8.0),
             QPageLayout.Unit.Millimeter
         )
         printer.setPageLayout(safe_layout)
@@ -237,7 +274,6 @@ class PrintMenuDialog(QDialog):
     def print_med_karta(self):
         try:
             html = self._render_template_to_html("template_medkarta.html")
-            # Медкарта печатается альбомно (Landscape)
             self._print_html_direct(
                 html,
                 "МедКарта",
@@ -253,7 +289,8 @@ class PrintMenuDialog(QDialog):
         templates = [
             "template_medkarta_nark.html",
             "template_dogovor_narkolog.html",
-            "template_doc_narkolog_combo.html",
+            "template_narkolog_osmotr.html",      # <--- Лист осмотра на отдельном листе
+            "template_narkolog_soglasie.html",    # <--- Согласие на следующем отдельном листе
         ]
         self._print_batch_templates(
             templates,

@@ -1,0 +1,44 @@
+<html>
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+    <title>Согласие Нарколог</title>
+    <style>
+    @page { size: A5 portrait; margin: 0; }
+    html, body { height: 100%; margin: 0; padding: 0; }
+    body { font-family: 'Times New Roman', serif; font-size: 7pt; line-height: 1.15; color: #000; }
+    .page-container {
+        display: flex; flex-direction: column; justify-content: space-between;
+        height: 100%; box-sizing: border-box; padding: 6mm 4mm;
+    }
+    p { text-align: justify; margin: 0 0 1.2mm 0; }
+    .underline { border-bottom: 1px solid #000; display: inline-block; font-weight: bold; padding: 0 2px; }
+    .title { text-align: center; font-weight: bold; font-size: 8.5pt; margin-bottom: 1.5mm; }
+    .bottom-block { margin-top: auto; padding-top: 2mm; }
+    </style>
+</head>
+<body>
+    <div class="page-container">
+        <div>
+            <div class="title" style="margin-top: 1mm;">
+                ГБУЗ НО «Нижегородский областной наркологический диспансер»<br/>
+                Информированное согласие на оказание медицинской наркологической помощи
+            </div>
+            <p style="text-align: center; font-style: italic; font-size: 6.5pt; margin-bottom: 3mm;">
+                (Ст.20 ФЗ РФ №323 «Об основах охраны здоровья граждан в РФ»)
+            </p>
+            <p style="line-height: 1.2; text-indent: 4mm;">
+                Я, <span class="underline" style="min-width: 180px;">{{ doc.Фамилия }} {{ doc.Имя }} {{ doc.Отчество }}</span>, обратившись за наркологической помощью (обследованием, экспертизой) в ГБУЗ НО «Наркологическая больница», ознакомлен(а) с намеченным мне общим планом обследования, лечения, экспертизой.
+            </p>
+        </div>
+        <div class="bottom-block">
+            <p style="margin-bottom: 4mm;">Обследуемый: ________________________ / Подпись /</p>
+            <table width="100%" border="0">
+                <tr>
+                    <td width="60%">Врач: ___________________ / Ф.И.О. /</td>
+                    <td width="40%" align="right"><b>«{{ doc.Дата }}»г.</b></td>
+                </tr>
+            </table>
+        </div>
+    </div>
+</body>
+</html>

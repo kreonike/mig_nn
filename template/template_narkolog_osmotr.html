@@ -1,0 +1,51 @@
+<html>
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+    <title>Лист осмотра Нарколог</title>
+    <style>
+    @page { size: A5 portrait; margin: 0; }
+    html, body { height: 100%; margin: 0; padding: 0; }
+    body { font-family: 'Times New Roman', serif; font-size: 7pt; line-height: 1.15; color: #000; }
+    .page-container {
+        display: flex; flex-direction: column; justify-content: space-between;
+        height: 100%; box-sizing: border-box; padding: 4mm 2mm;
+    }
+    p { text-align: justify; margin: 0 0 1.2mm 0; }
+    .underline { border-bottom: 1px solid #000; display: inline-block; font-weight: bold; padding: 0 2px; }
+    .title { text-align: center; font-weight: bold; font-size: 8.5pt; margin-bottom: 1.5mm; }
+    .bottom-block { margin-top: auto; padding-top: 2mm; }
+    </style>
+</head>
+<body>
+    <div class="page-container">
+        <div>
+            <div align="right" style="font-size: 7pt; text-decoration: underline; margin-bottom: 1mm;">Выдаче на руки не подлежит</div>
+            <div class="title">ЛИСТ ОСМОТРА<br/><span style="font-weight: normal; font-size: 8pt;">врачом-психиатром-наркологом</span></div>
+            <p style="text-align: center; margin-bottom: 2mm;">Осмотр проведен в поликлинике ГБУЗ НО «НОНД»</p>
+            <p style="margin-bottom: 1.5mm;">1. Ф.И.О.: <span class="underline" style="width: 75%;">{{ doc.Фамилия }} {{ doc.Имя }} {{ doc.Отчество }}</span></p>
+            <p style="margin-bottom: 1.5mm;">2. Пол: <span class="underline" style="min-width: 40px;">{{ doc.Пол }}</span> 3. Дата рожд.: <span class="underline" style="min-width: 70px;">{{ doc.ДатаРождения }}</span></p>
+            <p style="margin-bottom: 1.5mm;">4. Регистрация: <span class="underline" style="width: 70%;">{{ doc.Область }}, {{ doc.Город }}, ул. {{ doc.Улица }}, д. {{ doc.Дом }}, кв. {{ doc.Квартира }}</span></p>
+            <p style="margin-bottom: 1.5mm;">5. Направлен: <span class="underline" style="width: 65%;">ООО «Медицинский центр Миг»</span></p>
+            <p style="margin-bottom: 2mm;">6. Вид деятельности: <span class="underline" style="width: 68%;">управление ТС (Категория {{ doc.КатегорияТС or 'B' }})</span></p>
+            <p>10. Под диспансерным наблюдением нарколога: <b>не находится</b>.</p>
+            <p>11. Периодичность алкоголизации: эпизодически.</p>
+            <p>12. Проявления синдрома алкогольной зависимости: <b>нет</b>.</p>
+            <p>13. Употребление наркотических веществ: <b>нет</b>.</p>
+            <p>14. Проявление синдрома зависимости от ПАВ: <b>нет</b>.</p>
+            <p>15. Кожные покровы: обычной окраски, без следов инъекций.</p>
+            <p>16. Зрачки: соответствуют освещению.</p>
+            <p>17. Фон настроения: адекватен ситуации.</p>
+            <p style="margin-top: 2mm;"><b>В результате осмотра установлено:</b></p>
+            <p style="font-size: 8.5pt; margin-top: 1mm; text-align: center;"><b>ПРОТИВОПОКАЗАНИЙ НЕТ: ГОДЕН</b></p>
+        </div>
+        <div class="bottom-block">
+            <table width="100%" border="0">
+                <tr>
+                    <td width="40%">«{{ doc.Дата }}»г.</td>
+                    <td width="60%" align="right">Врач-нарколог: ________ / Лещева Н.Г. /</td>
+                </tr>
+            </table>
+        </div>
+    </div>
+</body>
+</html>
