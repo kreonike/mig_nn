@@ -1,24 +1,37 @@
 <html>
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
-    <title>Документы Нарколог</title>
+    <title>Документы Нарколог A5</title>
     <style>
     @page {
         size: A5 portrait;
-        margin: 5mm 8mm 5mm 8mm;
+        margin: 6mm 8mm 6mm 8mm;
+    }
+    html, body {
+        height: 100%;
+        margin: 0;
+        padding: 0;
     }
     body {
         font-family: 'Times New Roman', serif;
-        font-size: 7.5pt;
-        line-height: 1.15;
+        font-size: 8pt;
+        line-height: 1.25;
         color: #000;
+    }
+    .page-container {
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        height: 100%;
+        box-sizing: border-box;
     }
     p {
         text-align: justify;
-        margin: 0 0 1mm 0;
+        margin: 0 0 2mm 0;
     }
     .page-break {
         page-break-after: always;
+        height: 0;
     }
     .underline {
         border-bottom: 1px solid #000;
@@ -30,78 +43,91 @@
     .title {
         text-align: center;
         font-weight: bold;
-        font-size: 8.5pt;
-        margin-bottom: 1.5mm;
+        font-size: 9.5pt;
+        margin-bottom: 2mm;
+    }
+    .bottom-block {
+        margin-top: auto;
+        padding-top: 3mm;
     }
 </style>
 </head>
 <body>
 
     <!-- СТРАНИЦА 1: ЛИСТ ОСМОТРА -->
-    <div align="right" style="font-size: 7.5pt; text-decoration: underline;">Выдаче на руки не подлежит</div>
-    <div class="title">
-        ЛИСТ ОСМОТРА<br/>
-        <span style="font-weight: normal; font-size: 8.5pt;">врачом-психиатром-наркологом</span>
+    <div class="page-container">
+        <div>
+            <div align="right" style="font-size: 8pt; text-decoration: underline; margin-bottom: 1mm;">Выдаче на руки не подлежит</div>
+            <div class="title">
+                ЛИСТ ОСМОТРА<br/>
+                <span style="font-weight: normal; font-size: 9pt;">врачом-психиатром-наркологом</span>
+            </div>
+
+            <p style="text-align: center; margin-bottom: 3mm;">Осмотр проведен в поликлинике ГБУЗ НО «НОНД»</p>
+
+            <p style="margin-bottom: 2.5mm;">1. Фамилия, имя, отчество: <span class="underline" style="width: 70%;">{{ doc.Фамилия }} {{ doc.Имя }} {{ doc.Отчество }}</span></p>
+            <p style="margin-bottom: 2.5mm;">
+                2. Пол: <span class="underline" style="min-width: 60px;">{{ doc.Пол }}</span>
+                3. Дата рождения: <span class="underline" style="min-width: 80px;">{{ doc.ДатаРождения }}</span>
+            </p>
+            <p style="margin-bottom: 2.5mm;">4. Постоянная регистрация: <span class="underline" style="width: 65%;">{{ doc.Область }}, {{ doc.Город }}, ул. {{ doc.Улица }}, д. {{ doc.Дом }}, кв. {{ doc.Квартира }}</span></p>
+            <p style="margin-bottom: 2.5mm;">5. Направлен лечебным учреждением: <span class="underline" style="width: 50%;">ООО «Медицинский центр Миг»</span></p>
+            <p style="margin-bottom: 3mm;">6. Вид деятельности в условиях повышенной опасности: <span class="underline" style="width: 95%;">управление транспортными средствами (Категория {{ doc.КатегорияТС or 'B' }})</span></p>
+
+            <p>7. Образование: высшее, среднее специальное, среднее, неполное среднее</p>
+            <p>10. Под диспансерным наблюдением нарколога: <b>не находится</b>.</p>
+            <p>11. Периодичность алкоголизации: эпизодически.</p>
+            <p>12. Проявления синдрома алкогольной зависимости: <b>нет</b>.</p>
+            <p>13. Употребление наркотических веществ: <b>нет</b>.</p>
+            <p>14. Проявление синдрома зависимости от ПАВ: <b>нет</b>.</p>
+            <p>15. Кожные покровы: обычной окраски, нормальной влажности, без следов инъекций.</p>
+            <p>16. Зрачки: соответствуют освещению.</p>
+            <p>17. Фон настроения: адекватен ситуации.</p>
+
+            <p style="margin-top: 4mm;"><b>В результате осмотра установлено:</b></p>
+            <p style="font-size: 9.5pt; margin-top: 2mm;"><b>ПРОТИВОПОКАЗАНИЙ К ДАННОМУ ВИДУ ДЕЯТЕЛЬНОСТИ НЕТ: ГОДЕН</b></p>
+        </div>
+
+        <div class="bottom-block">
+            <table width="100%" border="0">
+                <tr>
+                    <td width="40%">«{{ doc.Дата }}»г.</td>
+                    <td width="60%" align="right">Врач психиатр-нарколог: ____________ / Лещева Н.Г. /</td>
+                </tr>
+            </table>
+        </div>
     </div>
-
-    <p style="text-align: center;">Осмотр проведен в поликлинике ГБУЗ НО «НОНД»</p>
-
-    <p>1. Фамилия, имя, отчество: <span class="underline" style="width: 75%;">{{ doc.Фамилия }} {{ doc.Имя }} {{ doc.Отчество }}</span></p>
-    <p>
-        2. Пол: <span class="underline" style="min-width: 60px;">{{ doc.Пол }}</span>
-        3. Дата рождения: <span class="underline" style="min-width: 80px;">{{ doc.ДатаРождения }}</span>
-    </p>
-    <p>4. Постоянная регистрация: <span class="underline" style="width: 70%;">{{ doc.Область }}, {{ doc.Город }}, ул. {{ doc.Улица }}, д. {{ doc.Дом }}, кв. {{ doc.Квартира }}</span></p>
-    <p>5. Направлен лечебным учреждением: <span class="underline" style="width: 55%;">ООО «Медицинский центр Миг»</span></p>
-    <p>6. Вид деятельности в условиях повышенной опасности: <span class="underline" style="width: 95%;">управление транспортными средствами (Категория {{ doc.КатегорияТС or 'B' }})</span></p>
-
-    <p>7. Образование: высшее, среднее специальное, среднее, неполное среднее</p>
-    <p>10. Под диспансерным наблюдением нарколога: <b>не находится</b>.</p>
-    <p>11. Периодичность алкоголизации: эпизодически.</p>
-    <p>12. Проявления синдрома алкогольной зависимости: <b>нет</b>.</p>
-    <p>13. Употребление наркотических веществ: <b>нет</b>.</p>
-    <p>14. Проявление синдрома зависимости от ПАВ: <b>нет</b>.</p>
-    <p>15. Кожные покровы: обычной окраски, нормальной влажности, без следов инъекций.</p>
-    <p>16. Зрачки: соответствуют освещению.</p>
-    <p>17. Фон настроения: адекватен ситуации.</p>
-
-    <p style="margin-top: 4mm;"><b>В результате осмотра установлено:</b></p>
-    <p style="font-size: 9pt;"><b>ПРОТИВОПОКАЗАНИЙ К ДАННОМУ ВИДУ ДЕЯТЕЛЬНОСТИ НЕТ: ГОДЕН</b></p>
-
-    <br/>
-    <table width="100%" border="0" style="margin-top: 5mm;">
-        <tr>
-            <td width="50%">«{{ doc.Дата }}»г.</td>
-            <td width="50%" align="right">Врач психиатр-нарколог: ____________ / Лещева Н.Г. /</td>
-        </tr>
-    </table>
 
     <div class="page-break"></div>
 
     <!-- СТРАНИЦА 2: ИНФОРМИРОВАННОЕ СОГЛАСИЕ -->
-    <div class="title" style="margin-top: 10mm;">
-        ГБУЗ НО «Нижегородский областной наркологический диспансер»<br/>
-        Информированное согласие на оказание медицинской наркологической помощи
+    <div class="page-container">
+        <div>
+            <div class="title" style="margin-top: 2mm;">
+                ГБУЗ НО «Нижегородский областной наркологический диспансер»<br/>
+                Информированное согласие на оказание медицинской наркологической помощи
+            </div>
+
+            <p style="text-align: center; font-style: italic; margin-bottom: 6mm;">
+                (Ст.20 ФЗ РФ №323 «Об основах охраны здоровья граждан в Российской Федерации»)
+            </p>
+
+            <p style="line-height: 1.5; text-indent: 5mm;">
+                Я, <span class="underline" style="min-width: 250px;">{{ doc.Фамилия }} {{ doc.Имя }} {{ doc.Отчество }}</span>, обратившись за наркологической помощью (обследованием, экспертизой) в ГБУЗ НО «Наркологическая больница», ознакомлен(а) с намеченным мне общим планом обследования, лечения, экспертизой.
+            </p>
+        </div>
+
+        <div class="bottom-block">
+            <p style="margin-bottom: 8mm;">Обследуемый: ________________________ / Подпись /</p>
+
+            <table width="100%" border="0">
+                <tr>
+                    <td width="65%">Врач: _____________________________________ / Ф.И.О., подпись /</td>
+                    <td width="35%" align="right"><b>«{{ doc.Дата }}»г.</b></td>
+                </tr>
+            </table>
+        </div>
     </div>
-
-    <p style="text-align: center; font-style: italic;">
-        (Ст.20 ФЗ РФ №323 «Об основах охраны здоровья граждан в Российской Федерации»)
-    </p>
-
-    <p style="margin-top: 5mm; line-height: 1.5;">
-        Я, <span class="underline" style="min-width: 250px;">{{ doc.Фамилия }} {{ doc.Имя }} {{ doc.Отчество }}</span>, обратившись за наркологической помощью (обследованием, экспертизой) в ГБУЗ НО «Наркологическая больница», ознакомлен(а) с намеченным мне общим планом обследования, лечения, экспертизой.
-    </p>
-
-    <br/><br/>
-    <p>Обследуемый: ________________________ / Подпись /</p>
-
-    <br/><br/><br/>
-    <table width="100%" border="0">
-        <tr>
-            <td width="60%">Врач: _____________________________________ / Ф.И.О., подпись /</td>
-            <td width="40%" align="right"><b>«{{ doc.Дата }}»г.</b></td>
-        </tr>
-    </table>
 
 </body>
 </html>

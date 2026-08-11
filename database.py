@@ -19,6 +19,20 @@ DB_NAME = get_db_path()
 def get_connection() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_NAME)
     conn.row_factory = sqlite3.Row
+
+    # Регистрируем Python-функцию для ПОЛНОЦЕННОГО перевода кириллицы в нижний регистр в SQLite
+    conn.create_function("py_lower", 1, lambda s: str(s).lower() if s is not None else "")
+
+    # Создаем индексы для мгновенного поиска
+    conn.execute(
+        'CREATE INDEX IF NOT EXISTS "idx_клиенты_фио" ON "Клиенты" ("Фамилия", "Имя", "Отчество");'
+    )
+    conn.execute(
+        'CREATE INDEX IF NOT EXISTS "idx_клиенты_паспорт" ON "Клиенты" ("СерПасп", "ПспНом");'
+    )
+    conn.execute(
+        'CREATE INDEX IF NOT EXISTS "idx_клиенты_рождение" ON "Клиенты" ("ДатаРождения");'
+    )
     return conn
 
 
@@ -27,8 +41,9 @@ def get_connection() -> sqlite3.Connection:
 # ==============================================================================
 
 def search_clients_for_completer(
-    query: str, limit: int = 200
+        query: str, limit: int = 100
 ) -> List[Dict[str, Any]]:
+    """Поиск пациентов с гарантированной поддержкой кириллицы и приоритетом совпадения с начала фамилии."""
     conn = get_connection()
     cursor = conn.cursor()
     try:
@@ -37,10 +52,12 @@ def search_clients_for_completer(
 
         if not clean_q:
             cursor.execute(
-                'SELECT * FROM "Клиенты" ORDER BY "Фамилия" ASC LIMIT ?', (limit,)
+                'SELECT * FROM "Клиенты" ORDER BY "Фамилия" ASC LIMIT ?',
+                (limit,),
             )
             return [dict(row) for row in cursor.fetchall()]
 
+        # 1. Поиск по Инициалам + Дате (например: 'сдг11121981' или 'сдг 11.12.1981')
         pattern_date = re.match(
             r"^([a-zA-яёЁа-яА-Я]{2,3})[\s\.]*(\d{2})[\.\/]*(\d{2})[\.\/]*(\d{4})$",
             raw_q,
@@ -53,102 +70,87 @@ def search_clients_for_completer(
                 pattern_date.group(3),
                 pattern_date.group(4),
             )
-            f_init = letters[0] if len(letters) >= 1 else ""
-            i_init = letters[1] if len(letters) >= 2 else ""
-            o_init = letters[2] if len(letters) >= 3 else ""
+            f_init = f"{letters[0]}%" if len(letters) >= 1 else "%"
+            i_init = f"{letters[1]}%" if len(letters) >= 2 else "%"
+            o_init = f"{letters[2]}%" if len(letters) >= 3 else "%"
 
-            target_date_dot = f"{day}.{month}.{year}"
-            target_date_iso = f"{year}-{month}-{day}"
+            target_date_dot = f"%{day}.{month}.{year}%"
+            target_date_iso = f"%{year}-{month}-{day}%"
 
-            cursor.execute('SELECT * FROM "Клиенты" ORDER BY "Фамилия" ASC')
-            all_rows = [dict(r) for r in cursor.fetchall()]
-            matched = []
+            cursor.execute(
+                """
+                SELECT *
+                FROM "Клиенты"
+                WHERE py_lower("Фамилия") LIKE ?
+                  AND py_lower("Имя") LIKE ?
+                  AND (py_lower("Отчество") LIKE ? OR "Отчество" IS NULL)
+                  AND ("ДатаРождения" LIKE ? OR "ДатаРождения" LIKE ?)
+                ORDER BY "Фамилия" ASC LIMIT ?
+                """,
+                (f_init, i_init, o_init, target_date_dot, target_date_iso, limit),
+            )
+            rows = [dict(r) for r in cursor.fetchall()]
+            if rows:
+                return rows
 
-            for r in all_rows:
-                fam = str(r.get("Фамилия") or "").strip().lower()
-                nam = str(r.get("Имя") or "").strip().lower()
-                otch = str(r.get("Отчество") or "").strip().lower()
-                birth_raw = str(r.get("ДатаРождения") or "").strip()
-
-                cond_f = fam.startswith(f_init) if f_init else True
-                cond_i = nam.startswith(i_init) if i_init else True
-                cond_o = otch.startswith(o_init) if (o_init and otch) else True
-                cond_date = (
-                    (target_date_dot in birth_raw)
-                    or (target_date_iso in birth_raw)
-                    or (
-                        f"{year}" in birth_raw
-                        and f"{month}" in birth_raw
-                        and f"{day}" in birth_raw
-                    )
-                )
-
-                if cond_f and cond_i and cond_o and cond_date:
-                    matched.append(r)
-
-            if matched:
-                return matched
-
+        # 2. Поиск только по Инициалам (например: 'сд' или 'сдг')
         pattern_inits = re.match(r"^([a-zA-яёЁа-яА-Я]{2,3})$", raw_q)
         if pattern_inits:
             letters = pattern_inits.group(1).lower()
-            f_init = letters[0] if len(letters) >= 1 else ""
-            i_init = letters[1] if len(letters) >= 2 else ""
-            o_init = letters[2] if len(letters) >= 3 else ""
+            f_init = f"{letters[0]}%" if len(letters) >= 1 else "%"
+            i_init = f"{letters[1]}%" if len(letters) >= 2 else "%"
+            o_init = f"{letters[2]}%" if len(letters) >= 3 else "%"
 
-            cursor.execute('SELECT * FROM "Клиенты" ORDER BY "Фамилия" ASC')
-            all_rows = [dict(r) for r in cursor.fetchall()]
-            matched_inits = []
+            cursor.execute(
+                """
+                SELECT *
+                FROM "Клиенты"
+                WHERE py_lower("Фамилия") LIKE ?
+                  AND py_lower("Имя") LIKE ?
+                  AND (py_lower("Отчество") LIKE ? OR "Отчество" IS NULL)
+                ORDER BY "Фамилия" ASC LIMIT ?
+                """,
+                (f_init, i_init, o_init, limit),
+            )
+            rows = [dict(r) for r in cursor.fetchall()]
+            if rows:
+                return rows
 
-            for r in all_rows:
-                fam = str(r.get("Фамилия") or "").strip().lower()
-                nam = str(r.get("Имя") or "").strip().lower()
-                otch = str(r.get("Отчество") or "").strip().lower()
-
-                cond_f = fam.startswith(f_init) if f_init else True
-                cond_i = nam.startswith(i_init) if i_init else True
-                cond_o = otch.startswith(o_init) if (o_init and otch) else True
-
-                if cond_f and cond_i and cond_o:
-                    matched_inits.append(r)
-
-            if matched_inits:
-                return matched_inits
-
-        q_raw = f"%{raw_q}%"
-        q_cap = f"%{raw_q.capitalize()}%"
-        q_lower = f"%{clean_q}%"
+        # 3. Поиск по подстроке с ИСПОЛЬЗОВАНИЕМ py_lower ДЛЯ КИРИЛЛИЦЫ
+        prefix_q = f"{clean_q}%"
+        anywhere_q = f"%{clean_q}%"
 
         cursor.execute(
             """
-            SELECT * FROM "Клиенты"
-            WHERE "Фамилия" LIKE ? OR "Фамилия" LIKE ? OR "Фамилия" LIKE ?
-               OR "Имя" LIKE ? OR "Имя" LIKE ?
-               OR "Отчество" LIKE ?
-               OR "ПспНом" LIKE ? OR "СерПасп" LIKE ?
-            ORDER BY "Фамилия" ASC
-            LIMIT ?
-        """,
-            (q_raw, q_cap, q_lower, q_raw, q_cap, q_raw, q_raw, q_raw, limit),
+            SELECT *,
+                   CASE
+                       WHEN py_lower("Фамилия") LIKE ?
+                           THEN 1 -- Высший приоритет: Фамилия начинается на 'соля%' (Соляник)
+                       WHEN py_lower("Имя") LIKE ? THEN 2 -- Имя начинается на 'соля%'
+                       WHEN py_lower("Фамилия") LIKE ? THEN 3 -- Содержит 'соля' внутри (Сысолятин)
+                       ELSE 4
+                       END AS match_rank
+            FROM "Клиенты"
+            WHERE py_lower("Фамилия") LIKE ?
+               OR py_lower("Имя") LIKE ?
+               OR py_lower("Отчество") LIKE ?
+               OR "ПспНом" LIKE ?
+               OR "СерПасп" LIKE ?
+            ORDER BY match_rank ASC, "Фамилия" ASC LIMIT ?
+            """,
+            (
+                prefix_q,
+                prefix_q,
+                anywhere_q,
+                anywhere_q,
+                anywhere_q,
+                anywhere_q,
+                anywhere_q,
+                anywhere_q,
+                limit,
+            ),
         )
-
-        rows = [dict(row) for row in cursor.fetchall()]
-        filtered_results = []
-        for r in rows:
-            fam = str(r.get("Фамилия") or "").lower()
-            name = str(r.get("Имя") or "").lower()
-            otch = str(r.get("Отчество") or "").lower()
-            passport = f"{r.get('СерПасп') or ''}{r.get('ПспНом') or ''}".lower()
-
-            if (
-                (clean_q in fam)
-                or (clean_q in name)
-                or (clean_q in otch)
-                or (clean_q in passport)
-            ):
-                filtered_results.append(r)
-
-        return filtered_results if filtered_results else rows
+        return [dict(row) for row in cursor.fetchall()]
 
     except Exception as e:
         print(f"Ошибка поиска пациентов: {e}")
@@ -157,24 +159,38 @@ def search_clients_for_completer(
         conn.close()
 
 
+def search_clients(query: str, limit: int = 200) -> List[Dict[str, Any]]:
+    return search_clients_for_completer(query, limit=limit)
+
+
 def save_client(client_data: Dict[str, Any]) -> int:
     conn = get_connection()
     cursor = conn.cursor()
     try:
         client_id = client_data.get("id")
-        street_clean = normalize_street_name(
-            client_data.get("Улица", "")
-        )
+        street_clean = normalize_street_name(client_data.get("Улица", ""))
 
         if client_id:
             cursor.execute(
                 """
-                UPDATE "Клиенты" SET
-                    "Фамилия" = ?, "Имя" = ?, "Отчество" = ?, "Пол" = ?, "ДатаРождения" = ?,
-                    "СерПасп" = ?, "ПспНом" = ?, "ПаспортВыданМесто" = ?, "ДатаВыдачи" = ?,
-                    "Область" = ?, "Город" = ?, "Район" = ?, "Улица" = ?, "Дом" = ?, "Квартира" = ?
+                UPDATE "Клиенты"
+                SET "Фамилия"           = ?,
+                    "Имя"               = ?,
+                    "Отчество"          = ?,
+                    "Пол"               = ?,
+                    "ДатаРождения"      = ?,
+                    "СерПасп"           = ?,
+                    "ПспНом"            = ?,
+                    "ПаспортВыданМесто" = ?,
+                    "ДатаВыдачи"        = ?,
+                    "Область"           = ?,
+                    "Город"             = ?,
+                    "Район"             = ?,
+                    "Улица"             = ?,
+                    "Дом"               = ?,
+                    "Квартира"          = ?
                 WHERE "id" = ?
-            """,
+                """,
                 (
                     client_data.get("Фамилия"),
                     client_data.get("Имя"),
@@ -199,12 +215,11 @@ def save_client(client_data: Dict[str, Any]) -> int:
         else:
             cursor.execute(
                 """
-                INSERT INTO "Клиенты" (
-                    "Фамилия", "Имя", "Отчество", "Пол", "ДатаРождения",
-                    "СерПасп", "ПспНом", "ПаспортВыданМесто", "ДатаВыдачи",
-                    "Область", "Город", "Район", "Улица", "Дом", "Квартира"
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
+                INSERT INTO "Клиенты" ("Фамилия", "Имя", "Отчество", "Пол", "ДатаРождения",
+                                       "СерПасп", "ПспНом", "ПаспортВыданМесто", "ДатаВыдачи",
+                                       "Область", "Город", "Район", "Улица", "Дом", "Квартира")
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
                 (
                     client_data.get("Фамилия"),
                     client_data.get("Имя"),
@@ -230,21 +245,30 @@ def save_client(client_data: Dict[str, Any]) -> int:
 
 
 def update_client(client_data: Dict[str, Any]) -> bool:
-    """Полное обновление карточки пациента с унифицированным адресом."""
     conn = get_connection()
     cursor = conn.cursor()
     try:
-        street_clean = normalize_street_name(
-            client_data.get("Улица", "")
-        )
+        street_clean = normalize_street_name(client_data.get("Улица", ""))
         cursor.execute(
             """
-            UPDATE "Клиенты" SET
-                "Фамилия" = ?, "Имя" = ?, "Отчество" = ?, "Пол" = ?, "ДатаРождения" = ?,
-                "СерПасп" = ?, "ПспНом" = ?, "ПаспортВыданМесто" = ?, "ДатаВыдачи" = ?,
-                "Область" = ?, "Город" = ?, "Район" = ?, "Улица" = ?, "Дом" = ?, "Квартира" = ?
+            UPDATE "Клиенты"
+            SET "Фамилия"           = ?,
+                "Имя"               = ?,
+                "Отчество"          = ?,
+                "Пол"               = ?,
+                "ДатаРождения"      = ?,
+                "СерПасп"           = ?,
+                "ПспНом"            = ?,
+                "ПаспортВыданМесто" = ?,
+                "ДатаВыдачи"        = ?,
+                "Область"           = ?,
+                "Город"             = ?,
+                "Район"             = ?,
+                "Улица"             = ?,
+                "Дом"               = ?,
+                "Квартира"          = ?
             WHERE "id" = ?
-        """,
+            """,
             (
                 client_data.get("Фамилия"),
                 client_data.get("Имя"),
@@ -289,19 +313,15 @@ def get_client_by_id(client_id: int) -> Optional[Dict[str, Any]]:
 # ==============================================================================
 
 def normalize_street_name(street: str) -> str:
-    """Убирает двойные пробелы, исправляет 'гер.Космоса' на 'гер. Космоса'."""
     if not street:
         return ""
     s = street.strip()
-    # Вставляем пробел после точки, если его нет (например, 'гер.Космоса' -> 'гер. Космоса')
     s = re.sub(r"\.([а-яА-Яa-zA-Z])", r". \1", s)
-    # Заменяем несколько пробелов одним
     s = re.sub(r"\s+", " ", s)
     return s.strip()
 
 
 def get_streets_list() -> List[str]:
-    """Возвращает чистый уникальный список улиц из базы для автодополнения."""
     conn = get_connection()
     cursor = conn.cursor()
     try:
@@ -310,7 +330,6 @@ def get_streets_list() -> List[str]:
         )
         raw_streets = [row[0] for row in cursor.fetchall() if row[0]]
 
-        # Нормализуем и удаляем дубликаты
         cleaned_set = set()
         for st in raw_streets:
             norm = normalize_street_name(st)
@@ -326,7 +345,6 @@ def get_streets_list() -> List[str]:
 
 
 def replace_street_in_db(old_name: str, new_name: str) -> int:
-    """Массовое переименование улицы во всей базе данных для устранения дублей."""
     conn = get_connection()
     cursor = conn.cursor()
     try:
@@ -352,13 +370,18 @@ def get_client_gibdd_certs(client_id: int) -> List[Dict[str, Any]]:
     try:
         cursor.execute(
             """
-            SELECT ROWID as id, "НомДоговора", "Дата", "СуммаДоговора", 'ГИБДД' AS "Тип", 
+            SELECT ROWID                                            as id,
+                   "НомДоговора",
+                   "Дата",
+                   "СуммаДоговора",
+                   'ГИБДД'                                          AS "Тип",
                    ("Выдана справкаСер" || ' ' || "ВыданаСправка№") AS "НомерСправки",
-                   "КатегорияТС", "Примечание"
+                   "КатегорияТС",
+                   "Примечание"
             FROM "Сделки"
             WHERE "КлиентID" = ?
             ORDER BY ROWID DESC
-        """,
+            """,
             (client_id,),
         )
         return [dict(r) for r in cursor.fetchall()]
@@ -375,12 +398,17 @@ def get_client_weapon_certs(client_id: int) -> List[Dict[str, Any]]:
     try:
         cursor.execute(
             """
-            SELECT ROWID as id, "НомДоговора", "Дата", "СуммаДоговора", 'Оружие' AS "Тип", 
-                   "Справка№" AS "НомерСправки", "Примечание"
+            SELECT ROWID      as id,
+                   "НомДоговора",
+                   "Дата",
+                   "СуммаДоговора",
+                   'Оружие'   AS "Тип",
+                   "Справка№" AS "НомерСправки",
+                   "Примечание"
             FROM "Справки_Оружие"
             WHERE "КлиентID" = ?
             ORDER BY ROWID DESC
-        """,
+            """,
             (client_id,),
         )
         return [dict(r) for r in cursor.fetchall()]
@@ -420,7 +448,7 @@ def get_next_deal_number(table_name: str) -> int:
 
 
 def get_latest_deal_info(
-    client_id: int, table_name: str
+        client_id: int, table_name: str
 ) -> Optional[Dict[str, Any]]:
     conn = get_connection()
     cursor = conn.cursor()
@@ -441,12 +469,11 @@ def save_gibdd_deal(deal_data: Dict[str, Any]) -> int:
     try:
         cursor.execute(
             """
-            INSERT INTO "Сделки" (
-                "НомДоговора", "КлиентID", "Дата", "СуммаДоговора",
-                "Выдана справкаСер", "ВыданаСправка№", "Сроком", "КатегорияТС",
-                "Примечание", "Психиатр", "Нарколог"
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
+            INSERT INTO "Сделки" ("НомДоговора", "КлиентID", "Дата", "СуммаДоговора",
+                                  "Выдана справкаСер", "ВыданаСправка№", "Сроком", "КатегорияТС",
+                                  "Примечание", "Психиатр", "Нарколог")
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
             (
                 deal_data.get("НомДоговора"),
                 deal_data.get("КлиентID"),
@@ -473,11 +500,10 @@ def save_weapon_deal(deal_data: Dict[str, Any]) -> int:
     try:
         cursor.execute(
             """
-            INSERT INTO "Справки_Оружие" (
-                "НомДоговора", "КлиентID", "Дата", "СуммаДоговора",
-                "Справка№", "Примечание", "Психиатр", "Нарколог"
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """,
+            INSERT INTO "Справки_Оружие" ("НомДоговора", "КлиентID", "Дата", "СуммаДоговора",
+                                          "Справка№", "Примечание", "Психиатр", "Нарколог")
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
             (
                 deal_data.get("НомДоговора"),
                 deal_data.get("КлиентID"),
@@ -500,7 +526,7 @@ def save_weapon_deal(deal_data: Dict[str, Any]) -> int:
 # ==============================================================================
 
 def get_statistics_for_period(
-    start_date: str, end_date: str
+        start_date: str, end_date: str
 ) -> Dict[str, Any]:
     conn = get_connection()
     cursor = conn.cursor()
@@ -611,7 +637,7 @@ def add_reference_item(table_name: str, column_name: str, value: str):
 
 
 def update_reference_item(
-    table_name: str, column_name: str, old_value: str, new_value: str
+        table_name: str, column_name: str, old_value: str, new_value: str
 ):
     conn = get_connection()
     cursor = conn.cursor()
@@ -647,14 +673,15 @@ def get_presets_list(preset_type: str = "ГИБДД") -> List[Dict[str, Any]]:
         if not cursor.fetchone():
             cursor.execute(
                 """
-                CREATE TABLE "Тарифы" (
-                    "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-                    "Тип" TEXT DEFAULT 'ГИБДД',
-                    "Название" TEXT,
+                CREATE TABLE "Тарифы"
+                (
+                    "id"        INTEGER PRIMARY KEY AUTOINCREMENT,
+                    "Тип"       TEXT DEFAULT 'ГИБДД',
+                    "Название"  TEXT,
                     "Категории" TEXT,
-                    "Сумма" REAL
+                    "Сумма"     REAL
                 )
-            """
+                """
             )
             conn.commit()
 
@@ -673,8 +700,9 @@ def get_presets_list(preset_type: str = "ГИБДД") -> List[Dict[str, Any]]:
         if cursor.fetchone()[0] == 0:
             cursor.executemany(
                 """
-                INSERT INTO "Тарифы" ("Тип", "Название", "Категории", "Сумма") VALUES (?, ?, ?, ?)
-            """,
+                INSERT INTO "Тарифы" ("Тип", "Название", "Категории", "Сумма")
+                VALUES (?, ?, ?, ?)
+                """,
                 [
                     ("ГИБДД", "Легковые (A, B)", "B", 500),
                     (
@@ -693,8 +721,9 @@ def get_presets_list(preset_type: str = "ГИБДД") -> List[Dict[str, Any]]:
         if cursor.fetchone()[0] == 0:
             cursor.executemany(
                 """
-                INSERT INTO "Тарифы" ("Тип", "Название", "Категории", "Сумма") VALUES (?, ?, ?, ?)
-            """,
+                INSERT INTO "Тарифы" ("Тип", "Название", "Категории", "Сумма")
+                VALUES (?, ?, ?, ?)
+                """,
                 [
                     (
                         "Оружие",
@@ -709,9 +738,12 @@ def get_presets_list(preset_type: str = "ГИБДД") -> List[Dict[str, Any]]:
 
         cursor.execute(
             """
-            SELECT * FROM "Тарифы" 
-            WHERE "Тип" = ? OR "Тип" IS NULL OR "Тип" = ''
-        """,
+            SELECT *
+            FROM "Тарифы"
+            WHERE "Тип" = ?
+               OR "Тип" IS NULL
+               OR "Тип" = ''
+            """,
             (preset_type,),
         )
         return [dict(row) for row in cursor.fetchall()]
@@ -736,17 +768,20 @@ def add_preset_item(preset_type: str, name: str, categories: str, price: float):
 
 
 def update_preset_item(
-    preset_id: int, preset_type: str, name: str, categories: str, price: float
+        preset_id: int, preset_type: str, name: str, categories: str, price: float
 ):
     conn = get_connection()
     cursor = conn.cursor()
     try:
         cursor.execute(
             """
-            UPDATE "Тарифы" 
-            SET "Тип" = ?, "Название" = ?, "Категории" = ?, "Сумма" = ? 
+            UPDATE "Тарифы"
+            SET "Тип"       = ?,
+                "Название"  = ?,
+                "Категории" = ?,
+                "Сумма"     = ?
             WHERE "id" = ?
-        """,
+            """,
             (preset_type, name, categories, price, preset_id),
         )
         conn.commit()
@@ -763,10 +798,10 @@ def delete_preset_item(preset_id: int):
     finally:
         conn.close()
 
+
 def merge_multiple_streets_in_db(
-    old_names: List[str], new_name: str
+        old_names: List[str], new_name: str
 ) -> int:
-    """Массово заменяет список ошибочных вариантов названий улиц на единое правильное название у всех пациентов."""
     conn = get_connection()
     cursor = conn.cursor()
     try:
@@ -774,7 +809,6 @@ def merge_multiple_streets_in_db(
         if not new_clean or not old_names:
             return 0
 
-        # Создаем плейсхолдеры (?, ?, ?) для SQL IN
         placeholders = ",".join(["?"] * len(old_names))
         query = f'UPDATE "Клиенты" SET "Улица" = ? WHERE "Улица" IN ({placeholders})'
 

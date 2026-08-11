@@ -1,5 +1,8 @@
 import os
 import sys
+import json
+import urllib.request
+
 from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
@@ -212,6 +215,7 @@ QStatusBar {
 
 
 class AboutDialog(QDialog):
+    """Диалоговое окно Информация о программе и проверка обновлений."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -245,11 +249,41 @@ class AboutDialog(QDialog):
         layout.addWidget(btn_close)
 
     def check_updates(self):
-        QMessageBox.information(
-            self,
-            "Проверка обновлений",
-            f"У вас установлена самая свежая версия программы ({APP_VERSION}).\nОбновлений не найдено.",
-        )
+        """Проверка наличия новых релизов на GitHub."""
+        github_api_url = "https://api.github.com/repos/kreonike/mig_nn/releases/latest"
+
+        try:
+            req = urllib.request.Request(
+                github_api_url,
+                headers={'User-Agent': 'Mozilla/5.0'}
+            )
+            with urllib.request.urlopen(req, timeout=5) as response:
+                if response.status == 200:
+                    data = json.loads(response.read().decode('utf-8'))
+                    latest_version = data.get('tag_name', '').lstrip('v')
+
+                    if latest_version and latest_version != APP_VERSION:
+                        QMessageBox.information(
+                            self,
+                            "Доступно обновление",
+                            f"Найдена новая версия: <b>{latest_version}</b>!\n"
+                            f"Текущая версия: {APP_VERSION}\n\n"
+                            f"Скачать обновление можно из репозитория GitHub.",
+                        )
+                    else:
+                        QMessageBox.information(
+                            self,
+                            "Проверка обновлений",
+                            f"У вас установлена самая свежая версия программы ({APP_VERSION}).",
+                        )
+                else:
+                    raise Exception("Ошибка ответа сервера")
+        except Exception as e:
+            QMessageBox.warning(
+                self,
+                "Ошибка связи",
+                f"Не удалось проверить обновления.\nПроверьте подключение к интернету.\n({e})",
+            )
 
 
 class MainWindow(QMainWindow):

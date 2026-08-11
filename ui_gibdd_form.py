@@ -1,5 +1,5 @@
 from datetime import datetime
-from PyQt6.QtCore import QDate, QStringListModel, Qt
+from PyQt6.QtCore import QDate, QStringListModel, Qt, QTimer
 from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -34,6 +34,12 @@ class GibddFormDialog(QDialog):
         self._block_search_signal = False
         self.presets_data = []
 
+        # Таймер задержки ввода для оптимизации поиска (200 мс)
+        self.search_timer = QTimer(self)
+        self.search_timer.setSingleShot(True)
+        self.search_timer.setInterval(200)
+        self.search_timer.timeout.connect(self._execute_search)
+
         self.init_ui()
         self.create_new_deal_number()
         self.setup_shortcuts()
@@ -55,10 +61,11 @@ class GibddFormDialog(QDialog):
         self.completer = QCompleter(self.completer_model, self)
         self.completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
 
-        # Включаем нефильтруемый режим выпадающего списка для работы алгоритма из database.py
+        # Отключаем встроенную фильтрацию Qt — показываем результаты из базы в точности так, как их отсортировал SQL
         self.completer.setCompletionMode(
             QCompleter.CompletionMode.UnfilteredPopupCompletion
         )
+
         self.search_input.setCompleter(self.completer)
 
         self.search_input.textEdited.connect(self.on_search_text_edited)
@@ -279,10 +286,12 @@ class GibddFormDialog(QDialog):
         self.field_spr_num.clear()
 
     def on_search_text_edited(self, text: str):
-        """Умный поиск пациентов через алгоритм search_clients_for_completer."""
         if self._block_search_signal:
             return
-        query = text.strip()
+        self.search_timer.start()
+
+    def _execute_search(self):
+        query = self.search_input.text().strip()
         if not query:
             self.completer_model.setStringList([])
             return

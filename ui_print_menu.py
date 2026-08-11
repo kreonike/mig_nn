@@ -23,7 +23,7 @@ class PrintMenuDialog(QDialog):
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(8)
 
-        # Кнопки согласно новой структуре
+        # Кнопки
         self.btn_dogovor = QPushButton("Договор")
         self.btn_sogl_opd = QPushButton("Согл на ОПД")
         self.btn_med_karta = QPushButton("МедКарта")
@@ -41,12 +41,8 @@ class PrintMenuDialog(QDialog):
         self.btn_sogl_opd.clicked.connect(self.print_sogl_opd)
         self.btn_med_karta.clicked.connect(self.print_med_karta)
         self.btn_doc_narkolog.clicked.connect(self.print_docs_narkolog)
-
-        # Заглушки для пока не подключенных документов
-        self.btn_doc_psih.clicked.connect(
-            lambda: self.on_print_click("Документы Психиатр")
-        )
-        self.btn_pso.clicked.connect(lambda: self.on_print_click("ПСО"))
+        self.btn_doc_psih.clicked.connect(self.print_docs_psych)
+        self.btn_pso.clicked.connect(self.print_pso)
 
         self.btn_close.clicked.connect(self.accept)
 
@@ -60,7 +56,6 @@ class PrintMenuDialog(QDialog):
         layout.addWidget(self.btn_close)
 
     def print_dogovor(self):
-        """Генерация и открытие договора в формате PDF."""
         pdf_path = generate_pdf_from_html(
             template_name="template_dogovor.html",
             client_data=self.client_data,
@@ -70,7 +65,6 @@ class PrintMenuDialog(QDialog):
         self._open_pdf(pdf_path, "Договора")
 
     def print_sogl_opd(self):
-        """Генерация и открытие Согласия на ОПД в формате PDF."""
         pdf_path = generate_pdf_from_html(
             template_name="template_agree.html",
             client_data=self.client_data,
@@ -80,7 +74,6 @@ class PrintMenuDialog(QDialog):
         self._open_pdf(pdf_path, "Согласия на ОПД")
 
     def print_med_karta(self):
-        """Генерация и открытие Медицинской карты 025/у в формате PDF."""
         pdf_path = generate_pdf_from_html(
             template_name="template_medkarta.html",
             client_data=self.client_data,
@@ -90,15 +83,8 @@ class PrintMenuDialog(QDialog):
         self._open_pdf(pdf_path, "Медицинской карты")
 
     def print_docs_narkolog(self):
-        """
-        Последовательная генерация и открытие полного пакета документов Нарколога:
-        1. МедКарта Нарколога
-        2. Договор с Наркологом
-        3. Лист осмотра + Согласие
-        """
         fam = self.client_data.get('Фамилия', 'Пациент')
 
-        # 1. МедКарта Нарколога
         pdf_karta = generate_pdf_from_html(
             template_name="template_medkarta_nark.html",
             client_data=self.client_data,
@@ -107,7 +93,6 @@ class PrintMenuDialog(QDialog):
         )
         self._open_pdf(pdf_karta, "МедКарты Нарколог")
 
-        # 2. Договор с Наркологом
         pdf_dog = generate_pdf_from_html(
             template_name="template_dogovor_narkolog.html",
             client_data=self.client_data,
@@ -116,7 +101,6 @@ class PrintMenuDialog(QDialog):
         )
         self._open_pdf(pdf_dog, "Договора Нарколог")
 
-        # 3. Лист осмотра + Согласие Нарколога
         pdf_combo = generate_pdf_from_html(
             template_name="template_doc_narkolog_combo.html",
             client_data=self.client_data,
@@ -125,12 +109,62 @@ class PrintMenuDialog(QDialog):
         )
         self._open_pdf(pdf_combo, "Листа осмотра и Согласия Нарколога")
 
+    def print_docs_psych(self):
+        """Пакетная генерация всех документов Психиатра (каждый на отдельном листе A5)."""
+        fam = self.client_data.get('Фамилия', 'Пациент')
+
+        # 1. Согласие Психиатр
+        pdf_agree = generate_pdf_from_html(
+            template_name="template_agree_psych.html",
+            client_data=self.client_data,
+            deal_data=self.deal_data,
+            output_pdf_name=f"Согласие_Психиатр_{fam}.pdf",
+        )
+        self._open_pdf(pdf_agree, "Согласия Психиатра")
+
+        # 2. Доверенность Психиатр
+        pdf_dover = generate_pdf_from_html(
+            template_name="template_dover_psych.html",
+            client_data=self.client_data,
+            deal_data=self.deal_data,
+            output_pdf_name=f"Доверенность_Психиатр_{fam}.pdf",
+        )
+        self._open_pdf(pdf_dover, "Доверенности Психиатра")
+
+        # 3. Осмотр Психиатра
+        pdf_osmotr = generate_pdf_from_html(
+            template_name="template_osmotr_psych.html",
+            client_data=self.client_data,
+            deal_data=self.deal_data,
+            output_pdf_name=f"Осмотр_Психиатра_{fam}.pdf",
+        )
+        self._open_pdf(pdf_osmotr, "Осмотра Психиатра")
+
+        # 4. МедКарта Кащенко
+        pdf_karta = generate_pdf_from_html(
+            template_name="template_medkarta_psych.html",
+            client_data=self.client_data,
+            deal_data=self.deal_data,
+            output_pdf_name=f"МедКарта_Психиатр_{fam}.pdf",
+        )
+        self._open_pdf(pdf_karta, "МедКарты Психиатра")
+
+    def print_pso(self):
+        """Генерация и открытие Заключения ПСО (Психиатрического освидетельствования)."""
+        fam = self.client_data.get('Фамилия', 'Пациент')
+        pdf_pso = generate_pdf_from_html(
+            template_name="template_pso.html",
+            client_data=self.client_data,
+            deal_data=self.deal_data,
+            output_pdf_name=f"Заключение_ПСО_{fam}.pdf",
+        )
+        self._open_pdf(pdf_pso, "Заключения ПСО")
+
     def _open_pdf(self, pdf_path: str, doc_title: str):
-        """Открытие сформированного PDF системным просмотрщиком."""
         if pdf_path and os.path.exists(pdf_path):
             if sys.platform == "win32":
                 os.startfile(pdf_path)
-            elif sys.platform == "darwin":  # macOS
+            elif sys.platform == "darwin":
                 subprocess.run(["open", pdf_path])
             else:
                 subprocess.run(["xdg-open", pdf_path])
@@ -138,11 +172,3 @@ class PrintMenuDialog(QDialog):
             QMessageBox.critical(
                 self, "Ошибка", f"Не удалось сгенерировать PDF файл {doc_title}."
             )
-
-    def on_print_click(self, doc_name: str):
-        """Заглушка для пока не подключенных документов."""
-        QMessageBox.information(
-            self,
-            "Печать",
-            f"Выбран документ: '{doc_name}'\n(Шаблон еще не подключен)",
-        )
