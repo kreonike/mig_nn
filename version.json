@@ -1,3 +1,5 @@
 {
-  "version": "1.2.0"
+  "version": "1.2.1",
+  "download_url": "https://github.com/kreonike/mig_nn/releases/download/v1.2.1/mig_nn_v1.2.1.zip",
+  "changelog": "• Исправлен поиск..."
 }
