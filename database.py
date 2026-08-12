@@ -91,6 +91,45 @@ def init_reference_tables():
                 ],
             )
 
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS "УВД" (
+                "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+                "Название" TEXT NOT NULL
+            );
+        """)
+
+        cursor.execute('SELECT COUNT(*) FROM "УВД"')
+        if cursor.fetchone()[0] == 0:
+            # Переносим прежний захардкоженный список, чтобы ничего не потерять
+            cursor.executemany(
+                'INSERT INTO "УВД" ("Название") VALUES (?)',
+                [
+                    ("УВД Нижегородского района",),
+                    ("УВД Автозаводского района",),
+                    ("УВД Сормовского района",),
+                ],
+            )
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS "Районы_НН" (
+                "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+                "НазРайона" TEXT NOT NULL
+            );
+        """)
+
+        cursor.execute('SELECT COUNT(*) FROM "Районы_НН"')
+        if cursor.fetchone()[0] == 0:
+            cursor.executemany(
+                'INSERT INTO "Районы_НН" ("НазРайона") VALUES (?)',
+                [
+                    ("Автозаводский",),
+                    ("Сормовский",),
+                    ("Нижегородский",),
+                    ("Советский",),
+                    ("Приокский",),
+                ],
+            )
+
         conn.commit()
     except Exception as e:
         logger.error(f"Ошибка инициализации справочников: {e}", exc_info=True)
@@ -125,17 +164,13 @@ def get_reference_table(table_name: str) -> List[Dict[str, Any]]:
         conn.close()
 
 
-def add_reference_item(table_name: str, item_data: Dict[str, Any]) -> bool:
+def add_reference_item(table_name: str, column_name: str, value: str) -> bool:
+    """Добавляет новую запись в однoколоночный справочник (напр. "УВД", "Районы_НН")."""
     conn = get_connection()
     cursor = conn.cursor()
     try:
-        keys = list(item_data.keys())
-        cols = ", ".join([f'"{k}"' for k in keys])
-        placeholders = ", ".join(["?"] * len(keys))
-        values = [item_data[k] for k in keys]
-
         cursor.execute(
-            f'INSERT INTO "{table_name}" ({cols}) VALUES ({placeholders})', values
+            f'INSERT INTO "{table_name}" ("{column_name}") VALUES (?)', (value,)
         )
         conn.commit()
         return True
@@ -146,11 +181,13 @@ def add_reference_item(table_name: str, item_data: Dict[str, Any]) -> bool:
         conn.close()
 
 
-def delete_reference_item(table_name: str, item_id: int) -> bool:
+def delete_reference_item(table_name: str, column_name: str, value: str) -> bool:
     conn = get_connection()
     cursor = conn.cursor()
     try:
-        cursor.execute(f'DELETE FROM "{table_name}" WHERE "id" = ?', (item_id,))
+        cursor.execute(
+            f'DELETE FROM "{table_name}" WHERE "{column_name}" = ?', (value,)
+        )
         conn.commit()
         return True
     except Exception as e:
@@ -161,23 +198,21 @@ def delete_reference_item(table_name: str, item_id: int) -> bool:
 
 
 def update_reference_item(
-    table_name: str, item_id: int, item_data: Dict[str, Any]
+        table_name: str, column_name: str, old_value: str, new_value: str
 ) -> bool:
+    """Обновляет значение в однoколоночном справочнике (напр. "УВД", "Районы_НН")."""
     conn = get_connection()
     cursor = conn.cursor()
     try:
-        set_clause = ", ".join([f'"{k}" = ?' for k in item_data.keys()])
-        values = list(item_data.values()) + [item_id]
-
         cursor.execute(
-            f'UPDATE "{table_name}" SET {set_clause} WHERE "id" = ?',
-            values,
+            f'UPDATE "{table_name}" SET "{column_name}" = ? WHERE "{column_name}" = ?',
+            (new_value, old_value),
         )
         conn.commit()
         return True
     except Exception as e:
         logger.error(
-            f"Ошибка обновления справочника '{table_name}' ID {item_id}: {e}",
+            f"Ошибка обновления справочника '{table_name}' ({old_value} -> {new_value}): {e}",
             exc_info=True,
         )
         return False
@@ -282,10 +317,10 @@ def update_preset_item(*args, **kwargs) -> bool:
                 preset_price = _parse_price_value(clean_args[3])
 
     if not preset_name and (
-        "title" in kwargs or "Название" in kwargs or "name" in kwargs
+            "title" in kwargs or "Название" in kwargs or "name" in kwargs
     ):
         preset_name = (
-            kwargs.get("title") or kwargs.get("Название") or kwargs.get("name")
+                kwargs.get("title") or kwargs.get("Название") or kwargs.get("name")
         )
     if not preset_cats and ("categories" in kwargs or "Категории" in kwargs):
         preset_cats = kwargs.get("categories") or kwargs.get("Категории")
@@ -346,10 +381,10 @@ def add_preset_item(*args, **kwargs) -> bool:
             preset_price = _parse_price_value(clean_args[2])
 
     if not preset_name and (
-        "title" in kwargs or "Название" in kwargs or "name" in kwargs
+            "title" in kwargs or "Название" in kwargs or "name" in kwargs
     ):
         preset_name = (
-            kwargs.get("title") or kwargs.get("Название") or kwargs.get("name")
+                kwargs.get("title") or kwargs.get("Название") or kwargs.get("name")
         )
     if not preset_cats and ("categories" in kwargs or "Категории" in kwargs):
         preset_cats = kwargs.get("categories") or kwargs.get("Категории")
@@ -431,7 +466,7 @@ def get_streets_list() -> List[str]:
 
 
 def merge_multiple_streets_in_db(
-    old_streets: List[str], target_street: str
+        old_streets: List[str], target_street: str
 ) -> int:
     if not old_streets or not target_street:
         return 0
@@ -494,7 +529,7 @@ def search_clients_for_completer(
             return low, cap, up
 
         # ----------------------------------------------------------------------
-        # 1. ПОИСК: БУКВЫ + ЦИФРЫ (например: слс13, слс27, сдг11121981)
+        # 1. ПОИСК: БУКВЫ + ЦИФРЫ (например: сдг23, сдг11, слс13, сдг11121981)
         # ----------------------------------------------------------------------
         match_letters_digits = re.match(
             r"^([a-zA-яёЁа-яА-Я]{1,10})(\d{1,8})$", q_clean
@@ -504,23 +539,50 @@ def search_clients_for_completer(
             digits = match_letters_digits.group(2)
             logger.info(f"[SEARCH_DEBUG] Распознан шаблон 'БУКВЫ + ЦИФРЫ': Буквы='{letters}', Цифры='{digits}'")
 
-            d_masks = []
+            # Нормализуем "ДатаРождения" к виду YYYY-MM-DD (10 симв.) прямо в SQL,
+            # независимо от формата хранения:
+            #   - "ДД.ММ.ГГГГ"                -> переставляем в ISO
+            #   - "ГГГГ-ММ-ДД" / "ГГГГ-ММ-ДД ЧЧ:ММ:СС" -> просто берём первые 10 символов
+            # Это устраняет любые проблемы с "хвостом" времени (00:00:00) и смешанными
+            # форматами дат в таблице.
+            date_norm_expr = (
+                'CASE '
+                'WHEN "ДатаРождения" LIKE \'__.__.____\' THEN '
+                'SUBSTR("ДатаРождения", 7, 4) || \'-\' || SUBSTR("ДатаРождения", 4, 2) '
+                '|| \'-\' || SUBSTR("ДатаРождения", 1, 2) '
+                'ELSE SUBSTR("ДатаРождения", 1, 10) '
+                'END'
+            )
+
+            d_params: tuple = ()
+
+            # А) 1 или 2 цифры -> ДЕНЬ РОЖДЕНИЯ (день 1..31)
             if len(digits) in (1, 2):
-                day_num = str(int(digits))
                 day_padded = digits.zfill(2)
-                d_masks = [f"%{day_padded}%", f"%{day_num}%"]
+                date_sql = f'(SUBSTR({date_norm_expr}, 9, 2) = ?)'
+                d_params = (day_padded,)
+
+            # Б) 3 или 4 цифры -> ДЕНЬ (первые 2) + МЕСЯЦ (следующие 2)
             elif len(digits) in (3, 4):
                 day_str = digits[:2].zfill(2)
                 month_str = digits[2:].zfill(2)
-                d_masks = [f"%{day_str}.{month_str}%", f"%{month_str}-{day_str}%"]
+                date_sql = (
+                    f'(SUBSTR({date_norm_expr}, 9, 2) = ? '
+                    f'AND SUBSTR({date_norm_expr}, 6, 2) = ?)'
+                )
+                d_params = (day_str, month_str)
+
+            # В) 5+ цифр -> ДЕНЬ + МЕСЯЦ + ГОД
             else:
                 day_str = digits[:2]
                 month_str = digits[2:4]
                 year_str = digits[4:]
-                d_masks = [f"%{day_str}.{month_str}.%{year_str}%", f"%{year_str}-{month_str}-{day_str}%"]
-
-            d_masks = list(set(d_masks))
-            date_sql = "(" + " OR ".join(['"ДатаРождения" LIKE ?'] * len(d_masks)) + ")"
+                date_sql = (
+                    f'(SUBSTR({date_norm_expr}, 9, 2) = ? '
+                    f'AND SUBSTR({date_norm_expr}, 6, 2) = ? '
+                    f'AND SUBSTR({date_norm_expr}, 1, 4) LIKE ?)'
+                )
+                d_params = (day_str, month_str, f"%{year_str}%")
 
             # Вариант 1A: Начало Фамилии + Дата
             low_l, cap_l, up_l = get_case_variants(letters)
@@ -530,7 +592,7 @@ def search_clients_for_completer(
                   AND {date_sql}
                 ORDER BY "Фамилия" ASC LIMIT ?
             """
-            params_a = (f"{low_l}%", f"{cap_l}%", f"{up_l}%") + tuple(d_masks) + (limit,)
+            params_a = (f"{low_l}%", f"{cap_l}%", f"{up_l}%") + d_params + (limit,)
             cursor.execute(sql_fam_start, params_a)
             rows = [dict(r) for r in cursor.fetchall()]
             logger.info(f"[SEARCH_DEBUG] [Вариант 1A - Начало Фамилии + Дата] Найдено: {len(rows)}")
@@ -561,7 +623,7 @@ def search_clients_for_completer(
                 params_b = (
                     f"{f_low}%", f"{f_cap}%", f"{f_up}%",
                     f"{i_low}%", f"{i_cap}%", f"{i_up}%",
-                ) + otch_params + tuple(d_masks) + (limit,)
+                ) + otch_params + d_params + (limit,)
 
                 cursor.execute(sql_inits, params_b)
                 rows = [dict(r) for r in cursor.fetchall()]
@@ -570,7 +632,7 @@ def search_clients_for_completer(
                     return rows
 
         # ----------------------------------------------------------------------
-        # 2. ПОИСК: ТОЛЬКО БУКВЫ (например: соля, слс)
+        # 2. ПОИСК: ТОЛЬКО БУКВЫ (например: соля, слс, сдг)
         # ----------------------------------------------------------------------
         match_letters = re.match(r"^([a-zA-яёЁа-яА-Я]{1,10})$", q_clean)
         if match_letters:
@@ -676,12 +738,66 @@ def search_clients(query: str, limit: int = 200) -> List[Dict[str, Any]]:
     return search_clients_for_completer(query, limit=limit)
 
 
+# ==============================================================================
+# 4.1 НОРМАЛИЗАЦИЯ ДАТ ПЕРЕД СОХРАНЕНИЕМ
+# ==============================================================================
+
+
+def normalize_date_for_storage(value: Any) -> Optional[str]:
+    """
+    Приводит дату к единому формату хранения "YYYY-MM-DD" независимо от того,
+    в каком виде она пришла из UI:
+      - "23.01.1985"                -> "1985-01-23"
+      - "1985-01-23"                -> "1985-01-23"
+      - "1985-01-23 00:00:00"       -> "1985-01-23"  (отбрасываем время)
+      - "23.__.____" (незаполненная маска ввода) -> None
+      - пусто / None                -> None
+
+    Вызывается централизованно в save_client/update_client/save_gibdd_deal/
+    save_weapon_deal, чтобы в базе всегда был один и тот же формат независимо
+    от того, какая форма и как именно передала дату.
+    """
+    if value is None:
+        return None
+
+    s = str(value).strip()
+    if not s:
+        return None
+
+    # Незаполненная маска ввода вида "23.__.____" — считаем, что дата не введена
+    if "_" in s:
+        return None
+
+    # Отбрасываем возможный "хвост" времени: "1985-01-23 00:00:00"
+    s = s.split(" ")[0].split("T")[0]
+
+    if "." in s:
+        parts = s.split(".")
+        if len(parts) == 3 and all(p.isdigit() for p in parts):
+            day, month, year = parts
+            if len(year) == 4:
+                return f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+        # Не смогли уверенно распознать — возвращаем как есть, чтобы не потерять данные
+        return s
+
+    if "-" in s:
+        parts = s.split("-")
+        if len(parts) == 3 and len(parts[0]) == 4 and all(p.isdigit() for p in parts):
+            year, month, day = parts
+            return f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+        return s
+
+    return s
+
+
 def save_client(client_data: Dict[str, Any]) -> int:
     conn = get_connection()
     cursor = conn.cursor()
     try:
         client_id = client_data.get("id")
         street_clean = normalize_street_name(client_data.get("Улица", ""))
+        birth_clean = normalize_date_for_storage(client_data.get("ДатаРождения"))
+        issued_clean = normalize_date_for_storage(client_data.get("ДатаВыдачи"))
 
         if client_id:
             cursor.execute(
@@ -709,11 +825,11 @@ def save_client(client_data: Dict[str, Any]) -> int:
                     client_data.get("Имя"),
                     client_data.get("Отчество"),
                     client_data.get("Пол"),
-                    client_data.get("ДатаРождения"),
+                    birth_clean,
                     client_data.get("СерПасп"),
                     client_data.get("ПспНом"),
                     client_data.get("ПаспортВыданМесто"),
-                    client_data.get("ДатаВыдачи"),
+                    issued_clean,
                     client_data.get("Область"),
                     client_data.get("Город"),
                     client_data.get("Район"),
@@ -738,11 +854,11 @@ def save_client(client_data: Dict[str, Any]) -> int:
                     client_data.get("Имя"),
                     client_data.get("Отчество"),
                     client_data.get("Пол"),
-                    client_data.get("ДатаРождения"),
+                    birth_clean,
                     client_data.get("СерПасп"),
                     client_data.get("ПспНом"),
                     client_data.get("ПаспортВыданМесто"),
-                    client_data.get("ДатаВыдачи"),
+                    issued_clean,
                     client_data.get("Область"),
                     client_data.get("Город"),
                     client_data.get("Район"),
@@ -762,6 +878,8 @@ def update_client(client_data: Dict[str, Any]) -> bool:
     cursor = conn.cursor()
     try:
         street_clean = normalize_street_name(client_data.get("Улица", ""))
+        birth_clean = normalize_date_for_storage(client_data.get("ДатаРождения"))
+        issued_clean = normalize_date_for_storage(client_data.get("ДатаВыдачи"))
         cursor.execute(
             """
             UPDATE "Клиенты"
@@ -787,11 +905,11 @@ def update_client(client_data: Dict[str, Any]) -> bool:
                 client_data.get("Имя"),
                 client_data.get("Отчество"),
                 client_data.get("Пол"),
-                client_data.get("ДатаРождения"),
+                birth_clean,
                 client_data.get("СерПасп"),
                 client_data.get("ПспНом"),
                 client_data.get("ПаспортВыданМесто"),
-                client_data.get("ДатаВыдачи"),
+                issued_clean,
                 client_data.get("Область"),
                 client_data.get("Город"),
                 client_data.get("Район"),
@@ -842,7 +960,7 @@ def get_next_deal_number(table_name: str) -> int:
 
 
 def get_latest_deal_info(
-    client_id: int, table_name: str
+        client_id: int, table_name: str
 ) -> Optional[Dict[str, Any]]:
     conn = get_connection()
     cursor = conn.cursor()
@@ -1055,18 +1173,30 @@ def get_client_deals(client_id: int) -> list:
 
 
 def get_districts_list() -> List[str]:
-    return [
-        "Автозаводский",
-        "Сормовский",
-        "Нижегородский",
-        "Советский",
-        "Приокский",
-    ]
+    init_reference_tables()
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute('SELECT "НазРайона" FROM "Районы_НН" ORDER BY "НазРайона" ASC')
+        rows = [r["НазРайона"] for r in cursor.fetchall() if r["НазРайона"]]
+        return rows
+    except Exception as e:
+        logger.error(f"Ошибка чтения справочника 'Районы_НН': {e}", exc_info=True)
+        return []
+    finally:
+        conn.close()
 
 
 def get_uvd_list() -> List[str]:
-    return [
-        "УВД Нижегородского района",
-        "УВД Автозаводского района",
-        "УВД Сормовского района",
-    ]
+    init_reference_tables()
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute('SELECT "Название" FROM "УВД" ORDER BY "Название" ASC')
+        rows = [r["Название"] for r in cursor.fetchall() if r["Название"]]
+        return rows
+    except Exception as e:
+        logger.error(f"Ошибка чтения справочника 'УВД': {e}", exc_info=True)
+        return []
+    finally:
+        conn.close()
