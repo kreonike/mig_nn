@@ -1,12 +1,15 @@
-import os
-import sys
 import json
 import logging
+import os
+import ssl
 import subprocess
+import sys
+import tempfile
 import urllib.request
+import zipfile
 from datetime import datetime
 
-from PyQt6.QtCore import QTimer, Qt
+from PyQt6.QtCore import QDate, QThread, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QApplication,
@@ -19,6 +22,7 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QMainWindow,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -32,7 +36,7 @@ from ui_gibdd_form import GibddFormDialog
 from ui_references import ReferencesDialog
 from ui_stats import StatsDialog
 
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.2.1"
 _main_window = None
 
 
@@ -89,6 +93,7 @@ def log_uncaught_exceptions(exctype, value, traceback):
 
 
 sys.excepthook = log_uncaught_exceptions
+
 
 # ==============================================================================
 # 🎨 СТИЛИ ОФОРМЛЕНИЯ
@@ -272,6 +277,107 @@ QStatusBar {
 """
 
 
+# ==============================================================================
+# 🔄 ПОТОК И ДИАЛОГ НАГЛЯДНОГО СКАЧИВАНИЯ ОБНОВЛЕНИЙ
+# ==============================================================================
+
+class DownloadThread(QThread):
+    progress_changed = pyqtSignal(int, int)  # downloaded_bytes, total_bytes
+    download_finished = pyqtSignal(str)     # path to downloaded file
+    download_failed = pyqtSignal(str)       # error message
+
+    def __init__(self, download_url, dest_path):
+        super().__init__()
+        self.download_url = download_url
+        self.dest_path = dest_path
+
+    def run(self):
+        ssl_context = ssl._create_unverified_context()
+        try:
+            req = urllib.request.Request(self.download_url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, context=ssl_context, timeout=30) as response:
+                total_size = int(response.headers.get('content-length', 0))
+                downloaded = 0
+                chunk_size = 1024 * 64  # 64 KB chunks
+
+                with open(self.dest_path, 'wb') as out_file:
+                    while True:
+                        chunk = response.read(chunk_size)
+                        if not chunk:
+                            break
+                        out_file.write(chunk)
+                        downloaded += len(chunk)
+                        self.progress_changed.emit(downloaded, total_size)
+
+            self.download_finished.emit(self.dest_path)
+        except Exception as e:
+            self.download_failed.emit(str(e))
+
+
+class UpdateProgressDialog(QDialog):
+    """Окно с наглядным прогрессом скачивания обновления."""
+
+    def __init__(self, download_url, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Загрузка обновления...")
+        self.setFixedSize(420, 160)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowCloseButtonHint)
+
+        self.download_url = download_url
+        self.downloaded_file = None
+
+        layout = QVBoxLayout(self)
+
+        self.lbl_status = QLabel("Подготовка к скачиванию...")
+        self.lbl_status.setStyleSheet("font-weight: bold;")
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setStyleSheet("QProgressBar::chunk { background-color: #0067c0; }")
+
+        self.lbl_details = QLabel("0 MB / 0 MB")
+        self.lbl_details.setAlignment(Qt.AlignmentFlag.AlignRight)
+
+        layout.addWidget(self.lbl_status)
+        layout.addWidget(self.progress_bar)
+        layout.addWidget(self.lbl_details)
+
+        is_zip = download_url.lower().endswith(".zip")
+        ext = ".zip" if is_zip else ".exe"
+
+        temp_dir = tempfile.gettempdir()
+        self.dest_path = os.path.join(temp_dir, f"mig_update_package{ext}")
+
+        self.thread = DownloadThread(download_url, self.dest_path)
+        self.thread.progress_changed.connect(self.on_progress)
+        self.thread.download_finished.connect(self.on_finished)
+        self.thread.download_failed.connect(self.on_failed)
+        self.thread.start()
+
+    def on_progress(self, downloaded, total):
+        if total > 0:
+            percent = int((downloaded / total) * 100)
+            self.progress_bar.setValue(percent)
+            mb_downloaded = downloaded / (1024 * 1024)
+            mb_total = total / (1024 * 1024)
+            self.lbl_status.setText(f"Загрузка обновления: {percent}%")
+            self.lbl_details.setText(f"{mb_downloaded:.1f} MB из {mb_total:.1f} MB")
+        else:
+            mb_downloaded = downloaded / (1024 * 1024)
+            self.lbl_status.setText("Загрузка обновления...")
+            self.lbl_details.setText(f"{mb_downloaded:.1f} MB")
+
+    def on_finished(self, downloaded_file):
+        self.downloaded_file = downloaded_file
+        self.accept()
+
+    def on_failed(self, error_msg):
+        logger.error(f"Ошибка загрузки обновления: {error_msg}")
+        QMessageBox.critical(self, "Ошибка скачивания", f"Не удалось скачать обновление:\n{error_msg}")
+        self.reject()
+
+
 class AboutDialog(QDialog):
     """Диалоговое окно Информация о программе и проверка обновлений."""
 
@@ -283,9 +389,7 @@ class AboutDialog(QDialog):
         layout = QVBoxLayout(self)
 
         title = QLabel("Медицинская информационная система")
-        title.setStyleSheet(
-            "font-size: 14px; font-weight: bold; color: #0067c0;"
-        )
+        title.setStyleSheet("font-size: 14px; font-weight: bold; color: #0067c0;")
         subtitle = QLabel("Модуль оформления медосвидетельствований (МИГ-НН)")
 
         ver_label = QLabel(f"<b>Версия программы:</b> {APP_VERSION}")
@@ -308,17 +412,13 @@ class AboutDialog(QDialog):
 
     def check_updates(self):
         """Проверка наличия обновлений через raw.githubusercontent.com."""
-        import ssl
         logger.info("Запуск процедуры проверки обновлений...")
 
         raw_version_url = "https://raw.githubusercontent.com/kreonike/mig_nn/main/version.json"
         ssl_context = ssl._create_unverified_context()
 
         try:
-            req = urllib.request.Request(
-                raw_version_url,
-                headers={'User-Agent': 'Mozilla/5.0'}
-            )
+            req = urllib.request.Request(raw_version_url, headers={'User-Agent': 'Mozilla/5.0'})
             with urllib.request.urlopen(req, context=ssl_context, timeout=5) as response:
                 if response.status == 200:
                     data = json.loads(response.read().decode('utf-8'))
@@ -330,16 +430,13 @@ class AboutDialog(QDialog):
 
                     if latest_version and latest_version != APP_VERSION:
                         logger.info(f"Найдена новая версия ({latest_version}). Запрос у пользователя на скачивание.")
-                        msg = f"Найдена новая версия: <b>{latest_version}</b>!\n"
-                        msg += f"Текущая версия: {APP_VERSION}\n\n"
+                        msg = f"Найдена новая версия: <b>{latest_version}</b>!\nТекущая версия: {APP_VERSION}\n\n"
                         if changelog:
                             msg += f"<b>Что нового:</b>\n{changelog}\n\n"
                         msg += "Хотите обновиться сейчас?"
 
                         reply = QMessageBox.question(
-                            self,
-                            "Доступно обновление",
-                            msg,
+                            self, "Доступно обновление", msg,
                             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
                         )
 
@@ -348,83 +445,90 @@ class AboutDialog(QDialog):
                     else:
                         logger.info("Установлена самая свежая версия программы.")
                         QMessageBox.information(
-                            self,
-                            "Проверка обновлений",
-                            f"У вас установлена самая свежая версия программы ({APP_VERSION}).",
+                            self, "Проверка обновлений",
+                            f"У вас установлена самая свежая версия программы ({APP_VERSION})."
                         )
                 else:
                     logger.error(f"Сервер вернул статус ответа: {response.status}")
                     raise Exception(f"Код ответа сервера: {response.status}")
         except Exception as e:
             logger.error(f"Ошибка при проверке обновлений: {e}", exc_info=True)
-            QMessageBox.warning(
-                self,
-                "Ошибка связи",
-                f"Не удалось проверить обновления.\nПроверьте подключение к интернету.\n({e})",
-            )
+            QMessageBox.warning(self, "Ошибка связи", f"Не удалось проверить обновления.\nПроверьте подключение к интернету.\n({e})")
 
     def run_auto_update(self, download_url: str):
-        """Скачивает новый exe и перезапускает программу через bat-скрипт."""
-        import ssl
-
+        """Скачивает и распаковывает обновление, перезапуская через bat-скрипт."""
         if not getattr(sys, 'frozen', False):
             logger.warning("Попытка запуска автообновления из исходного кода Python.")
             QMessageBox.information(
-                self,
-                "Режим разработки",
-                "Автообновление работает только в собранной .exe версии программы.\n"
-                "Для обновления кода используйте git pull."
+                self, "Режим разработки",
+                "Автообновление работает только в собранной .exe версии программы.\nДля обновления кода используйте git pull."
             )
             return
 
         if not download_url:
             logger.error("Ссылка для скачивания файла пуста!")
-            QMessageBox.critical(self, "Ошибка обновления",
-                                 "Ссылка для скачивания обновления не указана в version.json.")
+            QMessageBox.critical(self, "Ошибка обновления", "Ссылка для скачивания обновления не указана в version.json.")
             return
 
-        logger.info(f"Начало процесса автообновления. Скачивание: {download_url}")
-        ssl_context = ssl._create_unverified_context()
+        progress_dlg = UpdateProgressDialog(download_url, self)
+        if progress_dlg.exec() != QDialog.DialogCode.Accepted or not progress_dlg.downloaded_file:
+            return
 
+        downloaded_package = progress_dlg.downloaded_file
         current_exe = sys.executable
         exe_dir = os.path.dirname(current_exe)
-        new_exe = os.path.join(exe_dir, "app_update.tmp")
-        bat_file = os.path.join(exe_dir, "update.bat")
+        target_exe_tmp = os.path.join(exe_dir, "app_update.tmp")
 
         try:
-            logger.info(f"Сохранение временного файла: {new_exe}")
-            req = urllib.request.Request(download_url, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req, context=ssl_context) as response, open(new_exe, 'wb') as out_file:
-                out_file.write(response.read())
+            if downloaded_package.lower().endswith(".zip"):
+                logger.info("Распаковка ZIP-архива обновления...")
+                extract_dir = os.path.join(tempfile.gettempdir(), "mig_extracted")
+                os.makedirs(extract_dir, exist_ok=True)
 
-            logger.info("Создание bat-скрипта автозамены...")
+                with zipfile.ZipFile(downloaded_package, 'r') as zip_ref:
+                    zip_ref.extractall(extract_dir)
+
+                found_exe = None
+                for root, dirs, files in os.walk(extract_dir):
+                    for file in files:
+                        if file.endswith(".exe") and not file.startswith("unins"):
+                            found_exe = os.path.join(root, file)
+                            break
+                    if found_exe:
+                        break
+
+                if not found_exe:
+                    raise Exception("В ZIP-архиве обновления не найден файл .exe!")
+
+                import shutil
+                shutil.copy2(found_exe, target_exe_tmp)
+            else:
+                import shutil
+                shutil.copy2(downloaded_package, target_exe_tmp)
+
+            bat_file = os.path.join(exe_dir, "update.bat")
             bat_content = f"""@echo off
 chcp 1251 > nul
 timeout /t 2 /nobreak > nul
-move /y "{new_exe}" "{current_exe}"
+move /y "{target_exe_tmp}" "{current_exe}"
 start "" "{current_exe}"
 del "%~f0"
 """
             with open(bat_file, "w", encoding="cp1251") as f:
                 f.write(bat_content)
 
-            logger.info("Перезапуск приложения через update.bat...")
+            logger.info("Перезапуск через update.bat...")
             QMessageBox.information(
-                self,
-                "Обновление загружено",
-                "Программа перезапустится для завершения обновления."
+                self, "Обновление готово",
+                "Файлы успешно загружены. Программа перезапустится через 2 секунды."
             )
 
             subprocess.Popen([bat_file], shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
             sys.exit(0)
 
         except Exception as e:
-            logger.error(f"Сбой при скачивании или запуске автообновления: {e}", exc_info=True)
-            QMessageBox.critical(
-                self,
-                "Ошибка обновления",
-                f"Не удалось автоматически обновить файл:\n{e}"
-            )
+            logger.error(f"Сбой при распаковке или автозамене: {e}", exc_info=True)
+            QMessageBox.critical(self, "Ошибка обновления", f"Сбой обработки файла обновления:\n{e}")
 
 
 class MainWindow(QMainWindow):
@@ -444,14 +548,12 @@ class MainWindow(QMainWindow):
         self.init_ui()
         self.load_initial_clients()
 
-        # Автоматический бэкап при запуске
         self.run_auto_backup()
 
     def run_auto_backup(self):
         """Выполняет автоматическое резервное копирование базы данных."""
         logger.info("Старт процедуры автоматического бэкапа базы данных...")
         try:
-            # Проверяем правильное имя функции make_daily_backup в модуле database
             if hasattr(database, "make_daily_backup"):
                 db_filename = getattr(database, "DB_NAME", "mig_database.db")
                 database.make_daily_backup(db_filename, backup_dir="backups")
