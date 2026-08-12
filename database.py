@@ -22,23 +22,19 @@ DB_NAME = get_db_path()
 
 
 def get_connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_NAME)
+    # timeout=10.0 предотвращает блокировки базы при частых запросах живого поиска
+    conn = sqlite3.connect(DB_NAME, timeout=10.0)
     conn.row_factory = sqlite3.Row
+
+    # Включаем WAL-режим для ускорения работы при параллельном чтении/записи
+    try:
+        conn.execute('PRAGMA journal_mode=WAL;')
+    except Exception:
+        pass
+
     # Регистрируем нижний регистр для кириллицы
     conn.create_function(
         "LOWER", 1, lambda val: str(val).lower() if val is not None else None
-    )
-    conn.execute(
-        'CREATE INDEX IF NOT EXISTS "idx_клиенты_фио" ON "Клиенты" ("Фамилия",'
-        ' "Имя", "Отчество");'
-    )
-    conn.execute(
-        'CREATE INDEX IF NOT EXISTS "idx_клиенты_паспорт" ON "Клиенты"'
-        ' ("СерПасп", "ПспНом");'
-    )
-    conn.execute(
-        'CREATE INDEX IF NOT EXISTS "idx_клиенты_рождение" ON "Клиенты"'
-        ' ("ДатаРождения");'
     )
     return conn
 
@@ -49,27 +45,45 @@ def get_connection() -> sqlite3.Connection:
 
 
 def init_reference_tables():
+    """Создает таблицы и индексы в базе данных (вызывается при старте приложения)."""
     conn = get_connection()
     cursor = conn.cursor()
     try:
+        # Создание индексов (выполняется один раз при старте, а не при каждом соединении)
+        cursor.execute(
+            'CREATE INDEX IF NOT EXISTS "idx_клиенты_фио" ON "Клиенты" ("Фамилия", "Имя", "Отчество");'
+        )
+        cursor.execute(
+            'CREATE INDEX IF NOT EXISTS "idx_клиенты_паспорт" ON "Клиенты" ("СерПасп", "ПспНом");'
+        )
+        cursor.execute(
+            'CREATE INDEX IF NOT EXISTS "idx_клиенты_рождение" ON "Клиенты" ("ДатаРождения");'
+        )
+
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS "Пресеты_ГИБДД" (
                 "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+                "Тип" TEXT DEFAULT 'ГИБДД',
                 "Название" TEXT NOT NULL,
                 "Категории" TEXT,
                 "Сумма" REAL DEFAULT 0
             );
         """)
 
+        # Авто-миграция: если таблица создана ранее без колонки "Тип"
+        try:
+            cursor.execute('ALTER TABLE "Пресеты_ГИБДД" ADD COLUMN "Тип" TEXT DEFAULT "ГИБДД";')
+        except sqlite3.OperationalError:
+            pass  # Колонка уже существует
+
         cursor.execute('SELECT COUNT(*) FROM "Пресеты_ГИБДД"')
         if cursor.fetchone()[0] == 0:
             cursor.executemany(
-                'INSERT INTO "Пресеты_ГИБДД" ("Название", "Категории", "Сумма") VALUES'
-                " (?, ?, ?)",
+                'INSERT INTO "Пресеты_ГИБДД" ("Тип", "Название", "Категории", "Сумма") VALUES (?, ?, ?, ?)',
                 [
-                    ("Легковые (A, B)", "A, B", 500.0),
-                    ("Грузовые / Автобусы (C, D)", "C, D, CE, DE", 1000.0),
-                    ("Медосмотр с наркологом и психиатром", "A, B, C, D", 1500.0),
+                    ("ГИБДД", "Легковые (A, B)", "A, B", 500.0),
+                    ("ГИБДД", "Грузовые / Автобусы (C, D)", "C, D, CE, DE", 1000.0),
+                    ("ГИБДД", "Медосмотр с наркологом и психиатром", "A, B, C, D", 1500.0),
                 ],
             )
 
@@ -100,7 +114,6 @@ def init_reference_tables():
 
         cursor.execute('SELECT COUNT(*) FROM "УВД"')
         if cursor.fetchone()[0] == 0:
-            # Переносим прежний захардкоженный список, чтобы ничего не потерять
             cursor.executemany(
                 'INSERT INTO "УВД" ("Название") VALUES (?)',
                 [
@@ -132,7 +145,7 @@ def init_reference_tables():
 
         conn.commit()
     except Exception as e:
-        logger.error(f"Ошибка инициализации справочников: {e}", exc_info=True)
+        logger.error(f"Ошибка инициализации справочников и индексов: {e}", exc_info=True)
     finally:
         conn.close()
 
@@ -165,7 +178,7 @@ def get_reference_table(table_name: str) -> List[Dict[str, Any]]:
 
 
 def add_reference_item(table_name: str, column_name: str, value: str) -> bool:
-    """Добавляет новую запись в однoколоночный справочник (напр. "УВД", "Районы_НН")."""
+    """Добавляет новую запись в одноколоночный справочник (напр. "УВД", "Районы_НН")."""
     conn = get_connection()
     cursor = conn.cursor()
     try:
@@ -198,9 +211,9 @@ def delete_reference_item(table_name: str, column_name: str, value: str) -> bool
 
 
 def update_reference_item(
-        table_name: str, column_name: str, old_value: str, new_value: str
+    table_name: str, column_name: str, old_value: str, new_value: str
 ) -> bool:
-    """Обновляет значение в однoколоночном справочнике (напр. "УВД", "Районы_НН")."""
+    """Обновляет значение в одноколоночном справочнике."""
     conn = get_connection()
     cursor = conn.cursor()
     try:
@@ -239,14 +252,21 @@ def _parse_price_value(val: Any) -> float:
         return 0.0
 
 
-def get_presets_list(preset_type: str = "ГИБДД") -> List[Dict[str, Any]]:
+def get_presets_list(preset_type: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Загружает список пресетов. При передаче preset_type (напр. 'ГИБДД') фильтрует результаты."""
     conn = get_connection()
     cursor = conn.cursor()
     try:
         init_reference_tables()
-        cursor.execute(
-            'SELECT "id", "Название", "Категории", "Сумма" FROM "Пресеты_ГИБДД"'
-        )
+        if preset_type:
+            cursor.execute(
+                'SELECT "id", "Тип", "Название", "Категории", "Сумма" FROM "Пресеты_ГИБДД" WHERE "Тип" = ?',
+                (preset_type,)
+            )
+        else:
+            cursor.execute(
+                'SELECT "id", "Тип", "Название", "Категории", "Сумма" FROM "Пресеты_ГИБДД"'
+            )
         rows = cursor.fetchall()
 
         result = []
@@ -256,12 +276,15 @@ def get_presets_list(preset_type: str = "ГИБДД") -> List[Dict[str, Any]]:
             except (ValueError, TypeError):
                 preset_id = 0
 
+            type_val = str(r["Тип"] or "ГИБДД")
             title_val = str(r["Название"] or "")
             cats_val = str(r["Категории"] or "")
             price_val = _parse_price_value(r["Сумма"])
 
             result.append({
                 "id": preset_id,
+                "Тип": type_val,
+                "type": type_val,
                 "Название": title_val,
                 "title": title_val,
                 "name": title_val,
@@ -279,129 +302,51 @@ def get_presets_list(preset_type: str = "ГИБДД") -> List[Dict[str, Any]]:
         conn.close()
 
 
-def update_preset_item(*args, **kwargs) -> bool:
-    logger.info(f"[PRESET_UPDATE] Сырые аргументы: args={args}, kwargs={kwargs}")
-
-    preset_id = None
-    preset_name = ""
-    preset_cats = ""
-    preset_price = 0.0
-
-    if "preset_id" in kwargs:
-        preset_id = kwargs["preset_id"]
-    if "id" in kwargs:
-        preset_id = kwargs["id"]
-
-    all_args = list(args)
-
-    if all_args:
-        if len(all_args) >= 2 and isinstance(all_args[1], dict):
-            preset_id = all_args[0]
-            d = all_args[1]
-            preset_name = d.get("Название") or d.get("title") or d.get("name") or ""
-            preset_cats = d.get("Категории") or d.get("categories") or ""
-            preset_price = _parse_price_value(
-                d.get("Сумма") if "Сумма" in d else d.get("price")
-            )
-        else:
-            clean_args = [a for a in all_args if str(a).strip().upper() != "ГИБДД"]
-
-            if clean_args:
-                preset_id = clean_args[0]
-
-            if len(clean_args) >= 2:
-                preset_name = clean_args[1]
-            if len(clean_args) >= 3:
-                preset_cats = clean_args[2]
-            if len(clean_args) >= 4:
-                preset_price = _parse_price_value(clean_args[3])
-
-    if not preset_name and (
-            "title" in kwargs or "Название" in kwargs or "name" in kwargs
-    ):
-        preset_name = (
-                kwargs.get("title") or kwargs.get("Название") or kwargs.get("name")
-        )
-    if not preset_cats and ("categories" in kwargs or "Категории" in kwargs):
-        preset_cats = kwargs.get("categories") or kwargs.get("Категории")
-    if preset_price == 0.0 and ("price" in kwargs or "Сумма" in kwargs):
-        preset_price = _parse_price_value(
-            kwargs.get("price") if "price" in kwargs else kwargs.get("Сумма")
-        )
-
-    if preset_id is None:
-        logger.error("[PRESET_UPDATE] Не удалось определить preset_id!")
-        return False
-
+def update_preset_item(
+    preset_id: int, preset_type: str, name: str, categories: str, price: float
+) -> bool:
+    """Обновление пресета тарифного плана."""
     conn = get_connection()
     cursor = conn.cursor()
     try:
+        price_val = _parse_price_value(price)
         cursor.execute(
             """
             UPDATE "Пресеты_ГИБДД"
-            SET "Название"  = ?,
+            SET "Тип"       = ?,
+                "Название"  = ?,
                 "Категории" = ?,
                 "Сумма"     = ?
             WHERE "id" = ?
             """,
-            (str(preset_name), str(preset_cats), preset_price, int(preset_id)),
+            (str(preset_type), str(name), str(categories), price_val, int(preset_id)),
         )
         conn.commit()
         return True
     except Exception as e:
         logger.error(
-            f"[PRESET_UPDATE] Ошибка записи пресета в БД: {e}", exc_info=True
+            f"[PRESET_UPDATE] Ошибка записи пресета ID {preset_id}: {e}",
+            exc_info=True,
         )
         return False
     finally:
         conn.close()
 
 
-def add_preset_item(*args, **kwargs) -> bool:
-    preset_name = ""
-    preset_cats = ""
-    preset_price = 0.0
-
-    all_args = list(args)
-    clean_args = [a for a in all_args if str(a).strip().upper() != "ГИБДД"]
-
-    if clean_args and isinstance(clean_args[0], dict):
-        d = clean_args[0]
-        preset_name = d.get("Название") or d.get("title") or d.get("name") or ""
-        preset_cats = d.get("Категории") or d.get("categories") or ""
-        preset_price = _parse_price_value(
-            d.get("Сумма") if "Сумма" in d else d.get("price")
-        )
-    else:
-        if len(clean_args) >= 1:
-            preset_name = clean_args[0]
-        if len(clean_args) >= 2:
-            preset_cats = clean_args[1]
-        if len(clean_args) >= 3:
-            preset_price = _parse_price_value(clean_args[2])
-
-    if not preset_name and (
-            "title" in kwargs or "Название" in kwargs or "name" in kwargs
-    ):
-        preset_name = (
-                kwargs.get("title") or kwargs.get("Название") or kwargs.get("name")
-        )
-    if not preset_cats and ("categories" in kwargs or "Категории" in kwargs):
-        preset_cats = kwargs.get("categories") or kwargs.get("Категории")
-    if preset_price == 0.0 and ("price" in kwargs or "Сумма" in kwargs):
-        preset_price = _parse_price_value(
-            kwargs.get("price") if "price" in kwargs else kwargs.get("Сумма")
-        )
-
+def add_preset_item(
+    preset_type: str, name: str, categories: str, price: float
+) -> bool:
+    """Добавление нового пресета тарифного плана."""
     conn = get_connection()
     cursor = conn.cursor()
     try:
+        price_val = _parse_price_value(price)
         cursor.execute(
             """
-            INSERT INTO "Пресеты_ГИБДД" ("Название", "Категории", "Сумма")
-            VALUES (?, ?, ?)
+            INSERT INTO "Пресеты_ГИБДД" ("Тип", "Название", "Категории", "Сумма")
+            VALUES (?, ?, ?, ?)
             """,
-            (str(preset_name), str(preset_cats), preset_price),
+            (str(preset_type), str(name), str(categories), price_val),
         )
         conn.commit()
         return True
@@ -444,14 +389,32 @@ def normalize_street_name(street: str) -> str:
     return re.sub(r"\s+", " ", s).strip()
 
 
-def get_streets_list() -> List[str]:
+def get_streets_list(query: str = "", limit: Optional[int] = None) -> List[str]:
+    """
+    Получает полный список уникальных улиц из базы данных.
+    Если передан query — фильтрует по подстроке с опциональным лимитом.
+    Если query пустой — возвращает ВСЕ уникальные улицы базы.
+    """
     conn = get_connection()
     cursor = conn.cursor()
     try:
-        cursor.execute(
-            'SELECT DISTINCT "Улица" FROM "Клиенты" WHERE "Улица" IS NOT NULL AND'
-            ' "Улица" != ""'
-        )
+        if query:
+            if limit:
+                cursor.execute(
+                    'SELECT DISTINCT "Улица" FROM "Клиенты" WHERE "Улица" LIKE ? AND "Улица" IS NOT NULL AND "Улица" != "" ORDER BY "Улица" ASC LIMIT ?',
+                    (f"%{query}%", limit),
+                )
+            else:
+                cursor.execute(
+                    'SELECT DISTINCT "Улица" FROM "Клиенты" WHERE "Улица" LIKE ? AND "Улица" IS NOT NULL AND "Улица" != "" ORDER BY "Улица" ASC',
+                    (f"%{query}%",),
+                )
+        else:
+            # Читаем абсолютно все улицы из БД без срезки LIMIT
+            cursor.execute(
+                'SELECT DISTINCT "Улица" FROM "Клиенты" WHERE "Улица" IS NOT NULL AND "Улица" != "" ORDER BY "Улица" ASC'
+            )
+
         return sorted(
             list(
                 set(
@@ -466,7 +429,7 @@ def get_streets_list() -> List[str]:
 
 
 def merge_multiple_streets_in_db(
-        old_streets: List[str], target_street: str
+    old_streets: List[str], target_street: str
 ) -> int:
     if not old_streets or not target_street:
         return 0
@@ -539,12 +502,6 @@ def search_clients_for_completer(
             digits = match_letters_digits.group(2)
             logger.info(f"[SEARCH_DEBUG] Распознан шаблон 'БУКВЫ + ЦИФРЫ': Буквы='{letters}', Цифры='{digits}'")
 
-            # Нормализуем "ДатаРождения" к виду YYYY-MM-DD (10 симв.) прямо в SQL,
-            # независимо от формата хранения:
-            #   - "ДД.ММ.ГГГГ"                -> переставляем в ISO
-            #   - "ГГГГ-ММ-ДД" / "ГГГГ-ММ-ДД ЧЧ:ММ:СС" -> просто берём первые 10 символов
-            # Это устраняет любые проблемы с "хвостом" времени (00:00:00) и смешанными
-            # форматами дат в таблице.
             date_norm_expr = (
                 'CASE '
                 'WHEN "ДатаРождения" LIKE \'__.__.____\' THEN '
@@ -739,36 +696,19 @@ def search_clients(query: str, limit: int = 200) -> List[Dict[str, Any]]:
 
 
 # ==============================================================================
-# 4.1 НОРМАЛИЗАЦИЯ ДАТ ПЕРЕД СОХРАНЕНИЕМ
+# 5. СОХРАНЕНИЕ И ОБНОВЛЕНИЕ КЛИЕНТОВ
 # ==============================================================================
 
 
 def normalize_date_for_storage(value: Any) -> Optional[str]:
-    """
-    Приводит дату к единому формату хранения "YYYY-MM-DD" независимо от того,
-    в каком виде она пришла из UI:
-      - "23.01.1985"                -> "1985-01-23"
-      - "1985-01-23"                -> "1985-01-23"
-      - "1985-01-23 00:00:00"       -> "1985-01-23"  (отбрасываем время)
-      - "23.__.____" (незаполненная маска ввода) -> None
-      - пусто / None                -> None
-
-    Вызывается централизованно в save_client/update_client/save_gibdd_deal/
-    save_weapon_deal, чтобы в базе всегда был один и тот же формат независимо
-    от того, какая форма и как именно передала дату.
-    """
+    """Приводит дату к единому формату хранения YYYY-MM-DD."""
     if value is None:
         return None
 
     s = str(value).strip()
-    if not s:
+    if not s or "_" in s:
         return None
 
-    # Незаполненная маска ввода вида "23.__.____" — считаем, что дата не введена
-    if "_" in s:
-        return None
-
-    # Отбрасываем возможный "хвост" времени: "1985-01-23 00:00:00"
     s = s.split(" ")[0].split("T")[0]
 
     if "." in s:
@@ -777,7 +717,6 @@ def normalize_date_for_storage(value: Any) -> Optional[str]:
             day, month, year = parts
             if len(year) == 4:
                 return f"{year}-{month.zfill(2)}-{day.zfill(2)}"
-        # Не смогли уверенно распознать — возвращаем как есть, чтобы не потерять данные
         return s
 
     if "-" in s:
@@ -874,58 +813,7 @@ def save_client(client_data: Dict[str, Any]) -> int:
 
 
 def update_client(client_data: Dict[str, Any]) -> bool:
-    conn = get_connection()
-    cursor = conn.cursor()
-    try:
-        street_clean = normalize_street_name(client_data.get("Улица", ""))
-        birth_clean = normalize_date_for_storage(client_data.get("ДатаРождения"))
-        issued_clean = normalize_date_for_storage(client_data.get("ДатаВыдачи"))
-        cursor.execute(
-            """
-            UPDATE "Клиенты"
-            SET "Фамилия"           = ?,
-                "Имя"               = ?,
-                "Отчество"          = ?,
-                "Пол"               = ?,
-                "ДатаРождения"      = ?,
-                "СерПасп"           = ?,
-                "ПспНом"            = ?,
-                "ПаспортВыданМесто" = ?,
-                "ДатаВыдачи"        = ?,
-                "Область"           = ?,
-                "Город"             = ?,
-                "Район"             = ?,
-                "Улица"             = ?,
-                "Дом"               = ?,
-                "Квартира"          = ?
-            WHERE "id" = ?
-            """,
-            (
-                client_data.get("Фамилия"),
-                client_data.get("Имя"),
-                client_data.get("Отчество"),
-                client_data.get("Пол"),
-                birth_clean,
-                client_data.get("СерПасп"),
-                client_data.get("ПспНом"),
-                client_data.get("ПаспортВыданМесто"),
-                issued_clean,
-                client_data.get("Область"),
-                client_data.get("Город"),
-                client_data.get("Район"),
-                street_clean,
-                client_data.get("Дом"),
-                client_data.get("Квартира"),
-                client_data.get("id"),
-            ),
-        )
-        conn.commit()
-        return True
-    except Exception as e:
-        logger.error(f"Ошибка обновления карточки пациента: {e}", exc_info=True)
-        return False
-    finally:
-        conn.close()
+    return bool(save_client(client_data))
 
 
 def get_client_by_id(client_id: int) -> Optional[Dict[str, Any]]:
@@ -940,7 +828,7 @@ def get_client_by_id(client_id: int) -> Optional[Dict[str, Any]]:
 
 
 # ==============================================================================
-# 5. СДЕЛКИ И СТАТИСТИКА
+# 6. СДЕЛКИ И СТАТИСТИКА
 # ==============================================================================
 
 
@@ -960,7 +848,7 @@ def get_next_deal_number(table_name: str) -> int:
 
 
 def get_latest_deal_info(
-        client_id: int, table_name: str
+    client_id: int, table_name: str
 ) -> Optional[Dict[str, Any]]:
     conn = get_connection()
     cursor = conn.cursor()
@@ -1111,62 +999,46 @@ def get_statistics_for_period(start_date: str, end_date: str) -> Dict[str, Any]:
         conn.close()
 
 
-def get_client_deals(client_id: int) -> list:
+def get_client_deals(client_id: int) -> List[Dict[str, Any]]:
+    """
+    Возвращает объединенную историю всех справок пациента
+    (ГИБДД и Оружие), отсортированную по убыванию даты/ID.
+    """
     conn = get_connection()
     cursor = conn.cursor()
 
     try:
-        cursor.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name IN"
-            " ('Сделки', 'deals')"
-        )
-        table_row = cursor.fetchone()
-        if not table_row:
-            return []
+        query = """
+            SELECT 
+                "НомДоговора",
+                'ГИБДД' AS "Тип",
+                "Дата",
+                "ВыданаСправка№" AS "НомерСправки",
+                "СуммаДоговора",
+                "rowid" AS "sort_id"
+            FROM "Сделки"
+            WHERE "КлиентID" = ?
 
-        table_name = table_row[0]
+            UNION ALL
 
-        cursor.execute(f"PRAGMA table_info([{table_name}])")
-        columns_info = cursor.fetchall()
-        column_names = [col[1] for col in columns_info]
+            SELECT 
+                "НомДоговора",
+                'Оружие' AS "Тип",
+                "Дата",
+                "Справка№" AS "НомерСправки",
+                "СуммаДоговора",
+                "rowid" AS "sort_id"
+            FROM "Справки_Оружие"
+            WHERE "КлиентID" = ?
 
-        client_col_candidates = ["КлиентID", "клиент_id", "client_id", "IDКлиента"]
-        client_col = next(
-            (col for col in client_col_candidates if col in column_names), None
-        )
-
-        if not client_col:
-            client_col = next(
-                (
-                    col
-                    for col in column_names
-                    if "клиент" in col.lower() or "client" in col.lower()
-                ),
-                None,
-            )
-
-        if not client_col:
-            return []
-
-        sort_col = "rowid"
-        for candidate in ["id", "ID", "Код", "НомДоговора"]:
-            if candidate in column_names:
-                sort_col = candidate
-                break
-
-        query = (
-            f"SELECT * FROM [{table_name}] WHERE [{client_col}] = ? ORDER BY"
-            f" [{sort_col}] DESC"
-        )
-        cursor.execute(query, (client_id,))
-
+            ORDER BY "sort_id" DESC
+        """
+        cursor.execute(query, (client_id, client_id))
         rows = cursor.fetchall()
-        columns = [description[0] for description in cursor.description]
-        deals = [dict(zip(columns, row)) for row in rows]
-        return deals
+        return [dict(row) for row in rows]
 
     except Exception as e:
-        print(f"Ошибка при получении сделок клиента: {e}")
+        logger.error(f"Ошибка при получении сделок клиента ID {client_id}: {e}", exc_info=True)
         return []
     finally:
         conn.close()
