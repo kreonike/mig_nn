@@ -824,52 +824,76 @@ def save_weapon_deal(deal_data: Dict[str, Any]) -> int:
 
 
 def get_statistics_for_period(start_date: str, end_date: str) -> Dict[str, Any]:
+    """Возвращает статистику за период, корректно сравнивая даты любого формата."""
     conn = get_connection()
     cursor = conn.cursor()
+
+    def normalize_to_iso(d_str: str) -> str:
+        """Приводит любую дату к формату YYYY-MM-DD для правильной фильтрации в SQL."""
+        if not d_str:
+            return ""
+        s = d_str.strip()
+        if "." in s:
+            parts = s.split(".")
+            if len(parts) == 3:
+                return f"{parts[2]}-{parts[1].zfill(2)}-{parts[0].zfill(2)}"
+        return s
+
+    start_iso = normalize_to_iso(start_date)
+    end_iso = normalize_to_iso(end_date)
+
     try:
-        cursor.execute(
-            """
+        # Функция SQLite для конвертации 'DD.MM.YYYY' в 'YYYY-MM-DD' на лету
+        sql_date_conv = """
+            CASE 
+                WHEN "Дата" LIKE '__.__.____' THEN 
+                    SUBSTR("Дата", 7, 4) || '-' || SUBSTR("Дата", 4, 2) || '-' || SUBSTR("Дата", 1, 2)
+                ELSE "Дата"
+            END
+        """
+
+        # 1. Справки ГИБДД
+        query_gibdd = f"""
             SELECT COUNT(*) as cnt, SUM(CAST("СуммаДоговора" AS REAL)) as total
             FROM "Сделки"
-            WHERE "Дата" >= ? AND "Дата" <= ?
-            """,
-            (start_date, end_date),
-        )
+            WHERE {sql_date_conv} >= ? AND {sql_date_conv} <= ?
+        """
+        cursor.execute(query_gibdd, (start_iso, end_iso))
         gibdd_row = cursor.fetchone()
+        gibdd_cnt = gibdd_row["cnt"] if gibdd_row else 0
+        gibdd_sum = gibdd_row["total"] if (gibdd_row and gibdd_row["total"]) else 0.0
 
-        weapon_cnt, weapon_total = 0, 0.0
+        # 2. Справки Оружие
+        weapon_cnt, weapon_sum = 0, 0.0
         try:
-            cursor.execute(
-                """
+            query_weapon = f"""
                 SELECT COUNT(*) as cnt, SUM(CAST("СуммаДоговора" AS REAL)) as total
                 FROM "Справки_Оружие"
-                WHERE "Дата" >= ? AND "Дата" <= ?
-                """,
-                (start_date, end_date),
-            )
+                WHERE {sql_date_conv} >= ? AND {sql_date_conv} <= ?
+            """
+            cursor.execute(query_weapon, (start_iso, end_iso))
             weapon_row = cursor.fetchone()
             if weapon_row:
                 weapon_cnt = weapon_row["cnt"] or 0
-                weapon_total = weapon_row["total"] or 0.0
+                weapon_sum = weapon_row["total"] or 0.0
         except Exception:
             pass
 
-        gibdd_cnt = gibdd_row["cnt"] if gibdd_row else 0
-        gibdd_total = gibdd_row["total"] if (gibdd_row and gibdd_row["total"]) else 0.0
-
         return {
             "gibdd_count": gibdd_cnt,
-            "gibdd_total": gibdd_total,
+            "gibdd_sum": gibdd_sum,
+            "gibdd_total": gibdd_sum,
             "weapon_count": weapon_cnt,
-            "weapon_total": weapon_total,
+            "weapon_sum": weapon_sum,
+            "weapon_total": weapon_sum,
             "total_count": gibdd_cnt + weapon_cnt,
-            "total_sum": gibdd_total + weapon_total,
+            "total_sum": gibdd_sum + weapon_sum,
         }
     except Exception as e:
         logger.error(f"Ошибка получения статистики: {e}", exc_info=True)
         return {
-            "gibdd_count": 0, "gibdd_total": 0.0,
-            "weapon_count": 0, "weapon_total": 0.0,
+            "gibdd_count": 0, "gibdd_sum": 0.0, "gibdd_total": 0.0,
+            "weapon_count": 0, "weapon_sum": 0.0, "weapon_total": 0.0,
             "total_count": 0, "total_sum": 0.0
         }
     finally:
