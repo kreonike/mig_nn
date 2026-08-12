@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 import ssl
 import subprocess
 import sys
@@ -293,9 +294,31 @@ class DownloadThread(QThread):
 
     def run(self):
         ssl_context = ssl._create_unverified_context()
+
+        # Кастомный обработчик редиректов для сохранения User-Agent при переходе на CDN GitHub
+        class CustomRedirectHandler(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                new_req = super().redirect_request(req, fp, code, msg, headers, newurl)
+                if new_req:
+                    new_req.add_header(
+                        'User-Agent',
+                        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                    )
+                return new_req
+
         try:
-            req = urllib.request.Request(self.download_url, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req, context=ssl_context, timeout=30) as response:
+            https_handler = urllib.request.HTTPSHandler(context=ssl_context)
+            opener = urllib.request.build_opener(CustomRedirectHandler(), https_handler)
+
+            req = urllib.request.Request(
+                self.download_url,
+                headers={
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': '*/*'
+                }
+            )
+
+            with opener.open(req, timeout=30) as response:
                 total_size = int(response.headers.get('content-length', 0))
                 downloaded = 0
                 chunk_size = 1024 * 64  # 64 KB chunks
@@ -410,6 +433,13 @@ class AboutDialog(QDialog):
         layout.addWidget(btn_check_update)
         layout.addWidget(btn_close)
 
+    def parse_version(self, v_str: str) -> tuple:
+        """Преобразует строку версии ('1.2.2') в численный кортеж (1, 2, 2) для корректного сравнения."""
+        try:
+            return tuple(map(int, re.findall(r'\d+', str(v_str))))
+        except Exception:
+            return (0, 0, 0)
+
     def check_updates(self):
         """Проверка наличия обновлений через raw.githubusercontent.com."""
         logger.info("Запуск процедуры проверки обновлений...")
@@ -418,7 +448,10 @@ class AboutDialog(QDialog):
         ssl_context = ssl._create_unverified_context()
 
         try:
-            req = urllib.request.Request(raw_version_url, headers={'User-Agent': 'Mozilla/5.0'})
+            req = urllib.request.Request(
+                raw_version_url,
+                headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+            )
             with urllib.request.urlopen(req, context=ssl_context, timeout=5) as response:
                 if response.status == 200:
                     data = json.loads(response.read().decode('utf-8'))
@@ -428,8 +461,9 @@ class AboutDialog(QDialog):
 
                     logger.info(f"Получен ответ с сервера. Актуальная версия на GitHub: {latest_version}")
 
-                    if latest_version and latest_version != APP_VERSION:
-                        logger.info(f"Найдена новая версия ({latest_version}). Запрос у пользователя на скачивание.")
+                    # Сравниваем через корректное распарсивание версий в числа
+                    if latest_version and self.parse_version(latest_version) > self.parse_version(APP_VERSION):
+                        logger.info(f"Найдена новая версия ({latest_version} > {APP_VERSION}). Запрос у пользователя на скачивание.")
                         msg = f"Найдена новая версия: <b>{latest_version}</b>!\nТекущая версия: {APP_VERSION}\n\n"
                         if changelog:
                             msg += f"<b>Что нового:</b>\n{changelog}\n\n"
