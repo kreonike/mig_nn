@@ -40,12 +40,6 @@ class GibddFormDialog(QDialog):
         self.search_timer.setInterval(200)
         self.search_timer.timeout.connect(self._execute_search)
 
-        # Таймер поиска улицы
-        self.street_search_timer = QTimer(self)
-        self.street_search_timer.setSingleShot(True)
-        self.street_search_timer.setInterval(200)
-        self.street_search_timer.timeout.connect(self._execute_street_search)
-
         self.init_ui()
         self.create_new_deal_number()
         self.setup_shortcuts()
@@ -124,15 +118,10 @@ class GibddFormDialog(QDialog):
         self.field_rayon = QComboBox()
         self.field_rayon.setEditable(True)
 
-        # Поле улицы с автоподстановкой из БД
+        # Поле улицы с корректным быстрым автокомплитером из карточки пациента
         self.field_ulica = QLineEdit()
-        self.street_completer_model = QStringListModel(self)
-        self.street_completer = QCompleter(self.street_completer_model, self)
-        self.street_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        self.street_completer.setCompletionMode(QCompleter.CompletionMode.UnfilteredPopupCompletion)
-
-        self.field_ulica.setCompleter(self.street_completer)
-        self.field_ulica.textEdited.connect(self.on_street_text_edited)
+        self.field_ulica.setPlaceholderText("Начните вводить улицу...")
+        self.setup_street_completer()
 
         self.field_dom = QLineEdit()
         self.field_kv = QLineEdit()
@@ -214,6 +203,34 @@ class GibddFormDialog(QDialog):
 
         main_layout.addLayout(btn_box)
 
+    def setup_street_completer(self):
+        """Настройка полнотекстового автокомплитера улиц на стороне Qt."""
+        streets = database.get_streets_list()
+        street_completer = QCompleter(streets, self)
+        street_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        street_completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        self.field_ulica.setCompleter(street_completer)
+
+    def format_date_to_ru(self, raw_str: str) -> str:
+        """Преобразует дату из формата YYYY-MM-DD в DD.MM.YYYY для корректного отображения по маске."""
+        if not raw_str:
+            return ""
+        clean = str(raw_str).strip().split()[0]
+        if "-" in clean:
+            parts = clean.split("-")
+            if len(parts) == 3 and len(parts[0]) == 4:
+                return f"{parts[2].zfill(2)}.{parts[1].zfill(2)}.{parts[0]}"
+        return clean
+
+    def format_date_to_iso(self, ru_str: str) -> str:
+        """Преобразует дату из формата DD.MM.YYYY обратно в ISO (YYYY-MM-DD) для сохранения в БД."""
+        clean = str(ru_str).strip().replace("_", "")
+        if len(clean) == 10 and "." in clean:
+            parts = clean.split(".")
+            if len(parts) == 3:
+                return f"{parts[2]}-{parts[1].zfill(2)}-{parts[0].zfill(2)}"
+        return clean
+
     def setup_shortcuts(self):
         shortcut_save = QShortcut(QKeySequence("Ctrl+Return"), self)
         shortcut_save.activated.connect(self.save_and_print)
@@ -272,7 +289,7 @@ class GibddFormDialog(QDialog):
             fam = c.get("Фамилия") or ""
             nam = c.get("Имя") or ""
             otch = c.get("Отчество") or ""
-            birth = str(c.get("ДатаРождения") or "")
+            birth = self.format_date_to_ru(str(c.get("ДатаРождения") or ""))
             passport = f"{c.get('СерПасп') or ''} {c.get('ПспНом') or ''}".strip()
 
             display_text = f"{fam} {nam} {otch} ({birth}) [Паспорт: {passport}]".strip()
@@ -292,67 +309,20 @@ class GibddFormDialog(QDialog):
         if client:
             self.fill_client_data(client)
 
-    # ПОИСК И АВТОПОДСТАНОВКА УЛИЦЫ
-    def on_street_text_edited(self, text: str):
-        self.street_search_timer.start()
-
-    def _execute_street_search(self):
-        """Запрос улиц из базы и обновление выпадающего списка."""
-        query = self.field_ulica.text().strip()
-        if not query:
-            self.street_completer_model.setStringList([])
-            return
-
-        streets = []
-        try:
-            # Пробуем вызвать функцию из database.py (с учетом разных вариантов сигнатуры)
-            if hasattr(database, "get_streets_list"):
-                try:
-                    streets = database.get_streets_list(query, limit=50)
-                except TypeError:
-                    # Если функция в database.py принимает только query или вообще без аргументов
-                    try:
-                        streets = database.get_streets_list(query)
-                    except TypeError:
-                        streets = database.get_streets_list()
-            else:
-                # Резервный прямой запрос к SQLite, если в database.py нет метода
-                conn = sqlite3.connect("mig_database.db")
-                cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT DISTINCT Улица FROM Клиенты WHERE Улица LIKE ? AND Улица"
-                    " IS NOT NULL AND Улица != '' ORDER BY Улица LIMIT 50",
-                    (f"%{query}%",),
-                )
-                streets = [r[0] for r in cursor.fetchall() if r[0]]
-                conn.close()
-        except Exception:
-            streets = []
-
-        # Фильтрация по введенному тексту на случай, если функция вернула весь список
-        if query and streets:
-            query_lower = query.lower()
-            streets = [s for s in streets if query_lower in s.lower()]
-
-        self.street_completer_model.setStringList(streets)
-
-        if streets:
-            self.street_completer.setCompletionMode(
-                QCompleter.CompletionMode.UnfilteredPopupCompletion
-            )
-            self.street_completer.complete()
-
     def fill_client_data(self, c: dict):
         self.current_client_id = c["id"]
         self.field_id.setText(str(c["id"]))
         self.field_fam.setText(str(c.get("Фамилия") or ""))
         self.field_name.setText(str(c.get("Имя") or ""))
         self.field_otch.setText(str(c.get("Отчество") or ""))
-        self.field_birth.setText(str(c.get("ДатаРождения") or ""))
+
+        # Конвертируем даты в стандарт ДД.ММ.ГГГГ для отображения
+        self.field_birth.setText(self.format_date_to_ru(str(c.get("ДатаРождения") or "")))
         self.field_ser_p.setText(str(c.get("СерПасп") or ""))
         self.field_nom_p.setText(str(c.get("ПспНом") or ""))
         self.field_vidan.setCurrentText(str(c.get("ПаспортВыданМесто") or ""))
-        self.field_date_vidan.setText(str(c.get("ДатаВыдачи") or ""))
+        self.field_date_vidan.setText(self.format_date_to_ru(str(c.get("ДатаВыдачи") or "")))
+
         self.field_oblast.setText(str(c.get("Область") or "Нижегородская обл."))
         self.field_gorod.setText(str(c.get("Город") or "г. Нижний Новгород"))
         self.field_rayon.setCurrentText(str(c.get("Район") or ""))
@@ -400,11 +370,12 @@ class GibddFormDialog(QDialog):
             "Имя": self.field_name.text().strip(),
             "Отчество": self.field_otch.text().strip(),
             "Пол": self.field_pol.currentText(),
-            "ДатаРождения": self.field_birth.text().strip(),
+            # Приведение дат к ISO при сохранении
+            "ДатаРождения": self.format_date_to_iso(self.field_birth.text()),
             "СерПасп": self.field_ser_p.text().strip(),
             "ПспНом": self.field_nom_p.text().strip(),
             "ПаспортВыданМесто": self.field_vidan.currentText().strip(),
-            "ДатаВыдачи": self.field_date_vidan.text().strip(),
+            "ДатаВыдачи": self.format_date_to_iso(self.field_date_vidan.text()),
             "Область": self.field_oblast.text().strip(),
             "Город": self.field_gorod.text().strip(),
             "Район": self.field_rayon.currentText().strip(),

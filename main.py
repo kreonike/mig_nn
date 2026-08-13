@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 import ssl
 import subprocess
 import sys
@@ -9,7 +10,7 @@ import urllib.request
 import zipfile
 from datetime import datetime
 
-from PyQt6.QtCore import QDate, QThread, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QThread, Qt, pyqtSignal
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QApplication,
@@ -36,7 +37,7 @@ from ui_gibdd_form import GibddFormDialog
 from ui_references import ReferencesDialog
 from ui_stats import StatsDialog
 
-APP_VERSION = "1.2.1"
+APP_VERSION = "1.2.2"
 _main_window = None
 
 
@@ -293,12 +294,33 @@ class DownloadThread(QThread):
 
     def run(self):
         ssl_context = ssl._create_unverified_context()
+
+        class CustomRedirectHandler(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                new_req = super().redirect_request(req, fp, code, msg, headers, newurl)
+                if new_req:
+                    new_req.add_header(
+                        'User-Agent',
+                        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                    )
+                return new_req
+
         try:
-            req = urllib.request.Request(self.download_url, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req, context=ssl_context, timeout=30) as response:
+            https_handler = urllib.request.HTTPSHandler(context=ssl_context)
+            opener = urllib.request.build_opener(CustomRedirectHandler(), https_handler)
+
+            req = urllib.request.Request(
+                self.download_url,
+                headers={
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': '*/*'
+                }
+            )
+
+            with opener.open(req, timeout=30) as response:
                 total_size = int(response.headers.get('content-length', 0))
                 downloaded = 0
-                chunk_size = 1024 * 64  # 64 KB chunks
+                chunk_size = 1024 * 64
 
                 with open(self.dest_path, 'wb') as out_file:
                     while True:
@@ -410,6 +432,13 @@ class AboutDialog(QDialog):
         layout.addWidget(btn_check_update)
         layout.addWidget(btn_close)
 
+    def parse_version(self, v_str: str) -> tuple:
+        """Преобразует строку версии ('1.2.2') в численный кортеж (1, 2, 2)."""
+        try:
+            return tuple(map(int, re.findall(r'\d+', str(v_str))))
+        except Exception:
+            return (0, 0, 0)
+
     def check_updates(self):
         """Проверка наличия обновлений через raw.githubusercontent.com."""
         logger.info("Запуск процедуры проверки обновлений...")
@@ -418,7 +447,10 @@ class AboutDialog(QDialog):
         ssl_context = ssl._create_unverified_context()
 
         try:
-            req = urllib.request.Request(raw_version_url, headers={'User-Agent': 'Mozilla/5.0'})
+            req = urllib.request.Request(
+                raw_version_url,
+                headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+            )
             with urllib.request.urlopen(req, context=ssl_context, timeout=5) as response:
                 if response.status == 200:
                     data = json.loads(response.read().decode('utf-8'))
@@ -428,8 +460,8 @@ class AboutDialog(QDialog):
 
                     logger.info(f"Получен ответ с сервера. Актуальная версия на GitHub: {latest_version}")
 
-                    if latest_version and latest_version != APP_VERSION:
-                        logger.info(f"Найдена новая версия ({latest_version}). Запрос у пользователя на скачивание.")
+                    if latest_version and self.parse_version(latest_version) > self.parse_version(APP_VERSION):
+                        logger.info(f"Найдена новая версия ({latest_version} > {APP_VERSION}).")
                         msg = f"Найдена новая версия: <b>{latest_version}</b>!\nТекущая версия: {APP_VERSION}\n\n"
                         if changelog:
                             msg += f"<b>Что нового:</b>\n{changelog}\n\n"
@@ -461,7 +493,7 @@ class AboutDialog(QDialog):
             logger.warning("Попытка запуска автообновления из исходного кода Python.")
             QMessageBox.information(
                 self, "Режим разработки",
-                "Автообновление работает только в собранной .exe версии программы.\nДля обновления кода используйте git pull."
+                "Автообновление работает только в собранной .exe версии программы."
             )
             return
 
@@ -539,15 +571,8 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Медицинская информационная система — Справки ГИБДД")
         self.resize(1180, 720)
 
-        self.search_timer = QTimer()
-        self.search_timer.setSingleShot(True)
-        self.search_timer.setInterval(300)
-        self.search_timer.timeout.connect(self.perform_client_search)
-
         self.current_clients = []
         self.init_ui()
-        self.load_initial_clients()
-
         self.run_auto_backup()
 
     def run_auto_backup(self):
@@ -595,9 +620,6 @@ class MainWindow(QMainWindow):
         self.combo_theme.addItems(["☀️ Светлая тема", "🌙 Тёмная тема"])
         self.combo_theme.currentTextChanged.connect(self.change_theme)
 
-        btn_refresh = QPushButton("🔄 Обновить")
-        btn_refresh.clicked.connect(self.perform_client_search)
-
         top_bar.addWidget(btn_gibdd)
         top_bar.addWidget(btn_references)
         top_bar.addWidget(btn_stats)
@@ -605,7 +627,6 @@ class MainWindow(QMainWindow):
         top_bar.addStretch()
         top_bar.addWidget(theme_label)
         top_bar.addWidget(self.combo_theme)
-        top_bar.addWidget(btn_refresh)
 
         main_layout.addLayout(top_bar)
 
@@ -625,17 +646,11 @@ class MainWindow(QMainWindow):
         self.field_search.setPlaceholderText(
             "Введите ФИО, Паспорт ('соля'), Инициалы ('сдг') или с Датой ('сдг11121981')..."
         )
-        self.field_search.setClearButtonEnabled(True)
-
+        self.field_search.setClearButtonEnabled(True)  # Кнопка ✖ для очистки
         self.field_search.textChanged.connect(self.on_search_text_changed)
-        self.field_search.returnPressed.connect(self.perform_client_search)
-
-        btn_search = QPushButton("🔍 Найти")
-        btn_search.clicked.connect(self.perform_client_search)
 
         search_layout.addWidget(search_label)
         search_layout.addWidget(self.field_search)
-        search_layout.addWidget(btn_search)
 
         main_layout.addLayout(search_layout)
 
@@ -671,7 +686,7 @@ class MainWindow(QMainWindow):
 
         main_layout.addWidget(self.table_clients)
 
-        self.statusBar().showMessage("Готово к работе")
+        self.statusBar().showMessage("Введите данные для поиска")
 
     def change_theme(self, theme_name: str):
         logger.info(f"Переключение темы оформления на: {theme_name}")
@@ -684,18 +699,13 @@ class MainWindow(QMainWindow):
             app.setStyleSheet(DARK_EMERALD_STYLE)
 
     def on_search_text_changed(self, text: str):
-        if text.strip():
-            self.search_timer.start()
-        else:
-            self.search_timer.stop()
+        query = text.strip()
+        if not query:
             self.display_clients([])
             self.statusBar().showMessage("Введите данные для поиска")
+            return
 
-    def perform_client_search(self):
-        self.search_timer.stop()
-        query = self.field_search.text().strip()
-
-        logger.info(f"Выполнение поиска пациентов по запросу: '{query}'")
+        logger.info(f"Живой поиск пациентов по запросу: '{query}'")
         try:
             results = database.search_clients_for_completer(query, limit=200)
             self.display_clients(results)
@@ -707,11 +717,6 @@ class MainWindow(QMainWindow):
         except Exception as e:
             logger.error(f"Ошибка при выполнении поиска в базе данных: {e}", exc_info=True)
             self.statusBar().showMessage("Ошибка поиска")
-
-    def load_initial_clients(self):
-        self.field_search.clear()
-        self.display_clients([])
-        self.statusBar().showMessage("Введите ФИО или Паспорт для поиска")
 
     def display_clients(self, clients: list):
         self.current_clients = clients
@@ -750,7 +755,8 @@ class MainWindow(QMainWindow):
             logger.info(f"Открытие карточки пациента ID: {client['id']}")
             dialog = ClientCardDialog(client["id"], self)
             if dialog.exec():
-                self.perform_client_search()
+                # Обновляем результаты поиска после редактирования карточки
+                self.on_search_text_changed(self.field_search.text())
 
     def open_gibdd_form(self):
         logger.info("Открытие формы создания справки ГИБДД...")
