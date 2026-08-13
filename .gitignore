@@ -1,26 +1,39 @@
-# Скрытые сервисные файлы macOS / Windows
-._*
+```
+# Compiled Python files
+*.pyc
+__pycache__/
+
+# Virtual environments
+venv/
+.venv/
+.env
+*.env
+
+# Logs
+*.log
+
+# Coverage reports
+.coverage
+coverage/
+htmlcov/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
 .DS_Store
 Thumbs.db
 
-# Виртуальное окружение и кэш Python
-.venv/
-venv/
-__pycache__/
+# Build/test artifacts
 *.pyc
-
-# Сборки PyInstaller
-build/
+*.pyo
+*.pyd
+*.so
+*.egg-info/
 dist/
-*.spec
-
-# Базы данных, бэкапы и сгенерированные документы
-*.db
-*.mdb
-*.sqlite3
-*.pdf
-backups/
-
-# IDE
-.idea/
-.vscode/utils/
+build/
+*.egg
+```

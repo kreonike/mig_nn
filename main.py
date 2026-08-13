@@ -9,8 +9,9 @@ import tempfile
 import urllib.request
 import zipfile
 from datetime import datetime
+from typing import Optional
 
-from PyQt6.QtCore import QThread, Qt, pyqtSignal
+from PyQt6.QtCore import QThread, Qt, pyqtSignal, QTimer
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QApplication,
@@ -32,12 +33,13 @@ from PyQt6.QtWidgets import (
 )
 
 import database
+from backup import BackupThread
 from ui_client_card import ClientCardDialog
 from ui_gibdd_form import GibddFormDialog
 from ui_references import ReferencesDialog
 from ui_stats import StatsDialog
 
-APP_VERSION = "1.2.4"
+APP_VERSION = "1.2.5"
 _main_window = None
 
 
@@ -287,13 +289,15 @@ class DownloadThread(QThread):
     download_finished = pyqtSignal(str)     # path to downloaded file
     download_failed = pyqtSignal(str)       # error message
 
-    def __init__(self, download_url, dest_path):
+    def __init__(self, download_url, dest_path, expected_hash: Optional[str] = None):
         super().__init__()
         self.download_url = download_url
         self.dest_path = dest_path
+        self.expected_hash = expected_hash
 
     def run(self):
-        ssl_context = ssl._create_unverified_context()
+        # Используем стандартный SSL-контекст с проверкой сертификатов
+        ssl_context = ssl.create_default_context()
 
         class CustomRedirectHandler(urllib.request.HTTPRedirectHandler):
             def redirect_request(self, req, fp, code, msg, headers, newurl):
@@ -331,6 +335,19 @@ class DownloadThread(QThread):
                         downloaded += len(chunk)
                         self.progress_changed.emit(downloaded, total_size)
 
+            # Проверяем хеш файла, если он указан
+            if self.expected_hash:
+                import hashlib
+                sha256 = hashlib.sha256()
+                with open(self.dest_path, 'rb') as f:
+                    for block in iter(lambda: f.read(65536), b''):
+                        sha256.update(block)
+                actual_hash = sha256.hexdigest()
+                if actual_hash != self.expected_hash:
+                    os.remove(self.dest_path)
+                    self.download_failed.emit(f"Хеш файла не совпадает! Ожидался: {self.expected_hash}, получен: {actual_hash}")
+                    return
+
             self.download_finished.emit(self.dest_path)
         except Exception as e:
             self.download_failed.emit(str(e))
@@ -347,6 +364,7 @@ class UpdateProgressDialog(QDialog):
 
         self.download_url = download_url
         self.downloaded_file = None
+        self.expected_hash = None
 
         layout = QVBoxLayout(self)
 
@@ -371,7 +389,7 @@ class UpdateProgressDialog(QDialog):
         temp_dir = tempfile.gettempdir()
         self.dest_path = os.path.join(temp_dir, f"mig_update_package{ext}")
 
-        self.thread = DownloadThread(download_url, self.dest_path)
+        self.thread = DownloadThread(download_url, self.dest_path, self.expected_hash)
         self.thread.progress_changed.connect(self.on_progress)
         self.thread.download_finished.connect(self.on_finished)
         self.thread.download_failed.connect(self.on_failed)
@@ -444,7 +462,8 @@ class AboutDialog(QDialog):
         logger.info("Запуск процедуры проверки обновлений...")
 
         raw_version_url = "https://raw.githubusercontent.com/kreonike/mig_nn/main/version.json"
-        ssl_context = ssl._create_unverified_context()
+        # Используем стандартный SSL-контекст с проверкой сертификатов
+        ssl_context = ssl.create_default_context()
 
         try:
             req = urllib.request.Request(
@@ -457,6 +476,7 @@ class AboutDialog(QDialog):
                     latest_version = data.get('version', '').strip()
                     download_url = data.get('download_url', '').strip()
                     changelog = data.get('changelog', '')
+                    file_hash = data.get('sha256', '')  # SHA-256 хеш файла
 
                     logger.info(f"Получен ответ с сервера. Актуальная версия на GitHub: {latest_version}")
 
@@ -473,7 +493,7 @@ class AboutDialog(QDialog):
                         )
 
                         if reply == QMessageBox.StandardButton.Yes:
-                            self.run_auto_update(download_url)
+                            self.run_auto_update(download_url, file_hash)
                     else:
                         logger.info("Установлена самая свежая версия программы.")
                         QMessageBox.information(
@@ -487,7 +507,7 @@ class AboutDialog(QDialog):
             logger.error(f"Ошибка при проверке обновлений: {e}", exc_info=True)
             QMessageBox.warning(self, "Ошибка связи", f"Не удалось проверить обновления.\nПроверьте подключение к интернету.\n({e})")
 
-    def run_auto_update(self, download_url: str):
+    def run_auto_update(self, download_url: str, expected_hash: str = ""):
         """Скачивает и распаковывает обновление, перезапуская через bat-скрипт."""
         if not getattr(sys, 'frozen', False):
             logger.warning("Попытка запуска автообновления из исходного кода Python.")
@@ -503,8 +523,12 @@ class AboutDialog(QDialog):
             return
 
         progress_dlg = UpdateProgressDialog(download_url, self)
+        progress_dlg.expected_hash = expected_hash  # Передаем хеш в диалог
         if progress_dlg.exec() != QDialog.DialogCode.Accepted or not progress_dlg.downloaded_file:
             return
+
+        # Обновляем поток с хешем
+        progress_dlg.thread.expected_hash = expected_hash
 
         downloaded_package = progress_dlg.downloaded_file
         current_exe = sys.executable
@@ -569,27 +593,37 @@ class MainWindow(QMainWindow):
         super().__init__()
         logger.info("Инициализация главного окна...")
         self.setWindowTitle("Медицинская информационная система — Справки ГИБДД")
-        self.resize(1180, 720)
+        self.resize(1280, 760)
 
         self.current_clients = []
-        self.init_ui()
+        self.search_timer = QTimer()
+        self.search_timer.setSingleShot(True)
+        self.search_timer.timeout.connect(self._perform_search)
+        self.search_query_cache = ""
+        
+        # Запускаем бэкап в фоновом потоке
         self.run_auto_backup()
+        
+        self.init_ui()
 
     def run_auto_backup(self):
-        """Выполняет автоматическое резервное копирование базы данных."""
-        logger.info("Старт процедуры автоматического бэкапа базы данных...")
+        """Выполняет автоматическое резервное копирование базы данных в фоновом потоке."""
+        logger.info("Запуск процедуры автоматического бэкапа базы данных в фоне...")
         try:
-            if hasattr(database, "make_daily_backup"):
-                db_filename = getattr(database, "DB_NAME", "mig_database.db")
-                database.make_daily_backup(db_filename, backup_dir="backups")
-                logger.info("Процедура бэкапа успешно отработала.")
-            elif hasattr(database, "create_backup"):
-                database.create_backup()
-                logger.info("Процедура бэкапа успешно отработала через create_backup.")
-            else:
-                logger.warning("Метод бэкапа в модуле database не обнаружен.")
+            db_filename = getattr(database, "DB_NAME", "mig_database.db")
+            self.backup_thread = BackupThread(db_filename, backup_dir="backups")
+            self.backup_thread.backup_complete.connect(self.on_backup_complete)
+            self.backup_thread.start()
+            logger.info("Поток бэкапа запущен")
         except Exception as e:
-            logger.error(f"Ошибка при создании автоматического бэкапа БД: {e}", exc_info=True)
+            logger.error(f"Ошибка при запуске бэкапа: {e}", exc_info=True)
+    
+    def on_backup_complete(self, success: bool, message: str):
+        """Обработчик завершения бэкапа."""
+        if success:
+            logger.info(message)
+        else:
+            logger.error(message)
 
     def init_ui(self):
         central_widget = QWidget()
@@ -648,6 +682,7 @@ class MainWindow(QMainWindow):
         )
         self.field_search.setClearButtonEnabled(True)  # Кнопка ✖ для очистки
         self.field_search.textChanged.connect(self.on_search_text_changed)
+        self.field_search.setFocus()  # Автофокус на поле поиска
 
         search_layout.addWidget(search_label)
         search_layout.addWidget(self.field_search)
@@ -699,13 +734,25 @@ class MainWindow(QMainWindow):
             app.setStyleSheet(DARK_EMERALD_STYLE)
 
     def on_search_text_changed(self, text: str):
+        """Обрабатывает изменение текста в поле поиска с debounce (задержкой 300 мс)."""
         query = text.strip()
-        if not query:
+        
+        # Не ищем при пустом запросе или меньше 2 символов
+        if len(query) < 2:
             self.display_clients([])
-            self.statusBar().showMessage("Введите данные для поиска")
+            self.statusBar().showMessage("Введите минимум 2 символа для поиска")
+            self.search_timer.stop()
             return
+        
+        # Кэшируем запрос и перезапускаем таймер
+        self.search_query_cache = query
+        self.search_timer.start(300)  # Debounce 300 мс
 
-        logger.info(f"Живой поиск пациентов по запросу: '{query}'")
+    def _perform_search(self):
+        """Выполняет поиск по кэшированному запросу."""
+        query = self.search_query_cache
+        logger.info(f"Поиск пациентов по запросу: '{query}'")
+        
         try:
             results = database.search_clients_for_completer(query, limit=200)
             self.display_clients(results)
@@ -733,11 +780,19 @@ class MainWindow(QMainWindow):
                 " ,."
             )
 
-            self.table_clients.setItem(row, 0, QTableWidgetItem(str(c["id"])))
+            # Скрываем ID в UserRole, делаем колонку узкой
+            id_item = QTableWidgetItem(str(c["id"]))
+            id_item.setData(Qt.ItemDataRole.UserRole, c["id"])
+            self.table_clients.setItem(row, 0, id_item)
+            
             self.table_clients.setItem(row, 1, QTableWidgetItem(fio))
             self.table_clients.setItem(row, 2, QTableWidgetItem(birth))
             self.table_clients.setItem(row, 3, QTableWidgetItem(passport))
             self.table_clients.setItem(row, 4, QTableWidgetItem(address))
+        
+        # Показываем подсказку при пустом результате
+        if not clients:
+            self.statusBar().showMessage("Начните вводить запрос для поиска пациентов (минимум 2 символа)")
 
     def format_date(self, raw_str: str) -> str:
         if not raw_str or len(raw_str) < 8:
