@@ -161,6 +161,26 @@ class ClientCardDialog(QDialog):
         street_completer.setFilterMode(Qt.MatchFlag.MatchContains)
         self.field_ulica.setCompleter(street_completer)
 
+    def format_date_to_ru(self, raw_str: str) -> str:
+        """Преобразует строку даты из YYYY-MM-DD в DD.MM.YYYY для отображения в интерфейсе."""
+        if not raw_str:
+            return ""
+        clean = str(raw_str).strip().split()[0]
+        if "-" in clean:
+            parts = clean.split("-")
+            if len(parts) == 3 and len(parts[0]) == 4:
+                return f"{parts[2].zfill(2)}.{parts[1].zfill(2)}.{parts[0]}"
+        return clean
+
+    def format_date_to_iso(self, ru_str: str) -> str:
+        """Преобразует дату из DD.MM.YYYY обратно в YYYY-MM-DD для сохранения в БД."""
+        clean = str(ru_str).strip().replace("_", "")
+        if len(clean) == 10 and "." in clean:
+            parts = clean.split(".")
+            if len(parts) == 3:
+                return f"{parts[2]}-{parts[1].zfill(2)}-{parts[0].zfill(2)}"
+        return clean
+
     def load_data(self):
         self.field_vidan.clear()
         self.field_vidan.addItems(database.get_uvd_list())
@@ -178,7 +198,10 @@ class ClientCardDialog(QDialog):
         pol_text = str(client.get("Пол") or "Мужской")
         self.field_pol.setCurrentText(pol_text)
 
-        self.field_birth.setText(str(client.get("ДатаРождения") or ""))
+        # Конвертация дат для корректной работы с маской ввода 99.99.9999
+        birth_raw = str(client.get("ДатаРождения") or "")
+        self.field_birth.setText(self.format_date_to_ru(birth_raw))
+
         self.field_ser_p.setText(str(client.get("СерПасп") or ""))
         self.field_nom_p.setText(str(client.get("ПспНом") or ""))
 
@@ -189,7 +212,8 @@ class ClientCardDialog(QDialog):
         else:
             self.field_vidan.setCurrentText(vidan_text)
 
-        self.field_date_vidan.setText(str(client.get("ДатаВыдачи") or ""))
+        date_vidan_raw = str(client.get("ДатаВыдачи") or "")
+        self.field_date_vidan.setText(self.format_date_to_ru(date_vidan_raw))
 
         self.field_oblast.setText(
             str(client.get("Область") or "Нижегородская обл.")
@@ -220,7 +244,7 @@ class ClientCardDialog(QDialog):
                 row, 1, QTableWidgetItem(str(d.get("Тип", "")))
             )
             self.table_deals.setItem(
-                row, 2, QTableWidgetItem(str(d.get("Дата", "")))
+                row, 2, QTableWidgetItem(self.format_date_to_ru(str(d.get("Дата", ""))))
             )
             self.table_deals.setItem(
                 row, 3, QTableWidgetItem(str(d.get("НомерСправки", "")))
@@ -240,11 +264,12 @@ class ClientCardDialog(QDialog):
             "Имя": self.field_name.text().strip(),
             "Отчество": self.field_otch.text().strip(),
             "Пол": self.field_pol.currentText(),
-            "ДатаРождения": self.field_birth.text().strip(),
+            # Конвертируем обратно в ISO для корректной записи в БД
+            "ДатаРождения": self.format_date_to_iso(self.field_birth.text()),
             "СерПасп": self.field_ser_p.text().strip(),
             "ПспНом": self.field_nom_p.text().strip(),
             "ПаспортВыданМесто": self.field_vidan.currentText().strip(),
-            "ДатаВыдачи": self.field_date_vidan.text().strip(),
+            "ДатаВыдачи": self.format_date_to_iso(self.field_date_vidan.text()),
             "Область": self.field_oblast.text().strip(),
             "Город": self.field_gorod.text().strip(),
             "Район": self.field_rayon.currentText().strip(),
