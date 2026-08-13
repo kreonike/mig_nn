@@ -391,39 +391,43 @@ def normalize_street_name(street: str) -> str:
 
 def get_streets_list(query: str = "", limit: Optional[int] = None) -> List[str]:
     """
-    Получает полный список уникальных улиц из базы данных.
-    Если передан query — фильтрует по подстроке с опциональным лимитом.
-    Если query пустой — возвращает ВСЕ уникальные улицы базы.
+    Возвращает список уникальных улиц.
+    Если query пустой — отдает ВСЕ улицы базы данных без урезания.
+    Если передан query — ищет подстроку.
     """
     conn = get_connection()
     cursor = conn.cursor()
     try:
-        if query:
+        clean_q = str(query or "").strip()
+        if clean_q:
             if limit:
                 cursor.execute(
                     'SELECT DISTINCT "Улица" FROM "Клиенты" WHERE "Улица" LIKE ? AND "Улица" IS NOT NULL AND "Улица" != "" ORDER BY "Улица" ASC LIMIT ?',
-                    (f"%{query}%", limit),
+                    (f"%{clean_q}%", limit),
                 )
             else:
                 cursor.execute(
                     'SELECT DISTINCT "Улица" FROM "Клиенты" WHERE "Улица" LIKE ? AND "Улица" IS NOT NULL AND "Улица" != "" ORDER BY "Улица" ASC',
-                    (f"%{query}%",),
+                    (f"%{clean_q}%",),
                 )
         else:
-            # Читаем абсолютно все улицы из БД без срезки LIMIT
+            # Возвращаем 100% улиц базы данных
             cursor.execute(
                 'SELECT DISTINCT "Улица" FROM "Клиенты" WHERE "Улица" IS NOT NULL AND "Улица" != "" ORDER BY "Улица" ASC'
             )
 
-        return sorted(
-            list(
-                set(
-                    normalize_street_name(r[0])
-                    for r in cursor.fetchall()
-                    if r[0]
-                )
-            )
-        )
+        raw_streets = cursor.fetchall()
+        result_set = set()
+        for r in raw_streets:
+            if r[0]:
+                norm = normalize_street_name(r[0])
+                if norm:
+                    result_set.add(norm)
+
+        return sorted(list(result_set))
+    except Exception as e:
+        logger.error(f"Ошибка получения списка улиц: {e}", exc_info=True)
+        return []
     finally:
         conn.close()
 

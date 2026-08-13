@@ -40,12 +40,6 @@ class GibddFormDialog(QDialog):
         self.search_timer.setInterval(200)
         self.search_timer.timeout.connect(self._execute_search)
 
-        # Таймер поиска улицы
-        self.street_search_timer = QTimer(self)
-        self.street_search_timer.setSingleShot(True)
-        self.street_search_timer.setInterval(200)
-        self.street_search_timer.timeout.connect(self._execute_street_search)
-
         self.init_ui()
         self.create_new_deal_number()
         self.setup_shortcuts()
@@ -124,15 +118,10 @@ class GibddFormDialog(QDialog):
         self.field_rayon = QComboBox()
         self.field_rayon.setEditable(True)
 
-        # Поле улицы с автоподстановкой из БД
+        # Поле улицы с корректным быстрым автокомплитером из карточки пациента
         self.field_ulica = QLineEdit()
-        self.street_completer_model = QStringListModel(self)
-        self.street_completer = QCompleter(self.street_completer_model, self)
-        self.street_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
-        self.street_completer.setCompletionMode(QCompleter.CompletionMode.UnfilteredPopupCompletion)
-
-        self.field_ulica.setCompleter(self.street_completer)
-        self.field_ulica.textEdited.connect(self.on_street_text_edited)
+        self.field_ulica.setPlaceholderText("Начните вводить улицу...")
+        self.setup_street_completer()
 
         self.field_dom = QLineEdit()
         self.field_kv = QLineEdit()
@@ -213,6 +202,14 @@ class GibddFormDialog(QDialog):
         btn_box.addWidget(btn_close)
 
         main_layout.addLayout(btn_box)
+
+    def setup_street_completer(self):
+        """Настройка полнотекстового автокомплитера улиц на стороне Qt."""
+        streets = database.get_streets_list()
+        street_completer = QCompleter(streets, self)
+        street_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        street_completer.setFilterMode(Qt.MatchFlag.MatchContains)
+        self.field_ulica.setCompleter(street_completer)
 
     def format_date_to_ru(self, raw_str: str) -> str:
         """Преобразует дату из формата YYYY-MM-DD в DD.MM.YYYY для корректного отображения по маске."""
@@ -311,52 +308,6 @@ class GibddFormDialog(QDialog):
         client = self.found_clients_map.get(selected_text)
         if client:
             self.fill_client_data(client)
-
-    # ПОИСК И АВТОПОДСТАНОВКА УЛИЦЫ
-    def on_street_text_edited(self, text: str):
-        self.street_search_timer.start()
-
-    def _execute_street_search(self):
-        """Запрос улиц из базы и обновление выпадающего списка."""
-        query = self.field_ulica.text().strip()
-        if not query:
-            self.street_completer_model.setStringList([])
-            return
-
-        streets = []
-        try:
-            if hasattr(database, "get_streets_list"):
-                try:
-                    streets = database.get_streets_list(query, limit=50)
-                except TypeError:
-                    try:
-                        streets = database.get_streets_list(query)
-                    except TypeError:
-                        streets = database.get_streets_list()
-            else:
-                conn = sqlite3.connect("mig_database.db")
-                cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT DISTINCT Улица FROM Клиенты WHERE Улица LIKE ? AND Улица"
-                    " IS NOT NULL AND Улица != '' ORDER BY Улица LIMIT 50",
-                    (f"%{query}%",),
-                )
-                streets = [r[0] for r in cursor.fetchall() if r[0]]
-                conn.close()
-        except Exception:
-            streets = []
-
-        if query and streets:
-            query_lower = query.lower()
-            streets = [s for s in streets if query_lower in s.lower()]
-
-        self.street_completer_model.setStringList(streets)
-
-        if streets:
-            self.street_completer.setCompletionMode(
-                QCompleter.CompletionMode.UnfilteredPopupCompletion
-            )
-            self.street_completer.complete()
 
     def fill_client_data(self, c: dict):
         self.current_client_id = c["id"]
