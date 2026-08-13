@@ -4,7 +4,7 @@ pyinstaller --noconfirm --onedir --windowed --name "MIG_Medical_App" main.py
 
 Step 3. Ваше обычное действие при выходе нового релиза:
 
-    Вы правите код, собираете .exe файл (например, через PyInstaller: pyinstaller --noconfirm --onedir --windowed main.py).
+    Вы правите код, собираете .exe файл (например, через PyInstaller: pyinstaller --noconfirm --onedir --windowed --name "MIG_Medical_App" main.py).
 
     В репозитории GitHub переходите в раздел Releases -> Create a new release.
 
