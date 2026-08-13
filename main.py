@@ -34,6 +34,7 @@ from PyQt6.QtWidgets import (
 
 import database
 from backup import BackupThread
+from styles.modern_style import apply_modern_theme, LIGHT_THEME, DARK_THEME
 from ui_client_card import ClientCardDialog
 from ui_gibdd_form import GibddFormDialog
 from ui_references import ReferencesDialog
@@ -96,188 +97,6 @@ def log_uncaught_exceptions(exctype, value, traceback):
 
 
 sys.excepthook = log_uncaught_exceptions
-
-
-# ==============================================================================
-# 🎨 СТИЛИ ОФОРМЛЕНИЯ
-# ==============================================================================
-
-FLUENT_LIGHT_STYLE = """
-QWidget {
-    background-color: #f3f3f3;
-    color: #1a1a1a;
-    font-family: '.AppleSystemUIFont', BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-}
-QMainWindow, QDialog, QTabWidget, QTabBar, QScrollArea {
-    background-color: #f3f3f3;
-    color: #1a1a1a;
-}
-QLabel {
-    background-color: transparent;
-    color: #1a1a1a;
-}
-QGroupBox {
-    font-weight: bold;
-    border: 1px solid #e5e5e5;
-    border-radius: 8px;
-    margin-top: 12px;
-    padding-top: 16px;
-    background-color: #ffffff;
-    color: #0067c0;
-}
-QGroupBox::title {
-    subcontrol-origin: margin;
-    left: 12px;
-    padding: 0 4px;
-    background-color: #ffffff;
-    color: #0067c0;
-}
-QLineEdit, QComboBox, QDateEdit, QTextEdit {
-    border: 1px solid #d1d1d1;
-    border-bottom: 2px solid #0067c0;
-    border-radius: 4px;
-    padding: 6px 10px;
-    background-color: #ffffff;
-    color: #1a1a1a;
-    selection-background-color: #0067c0;
-    selection-color: #ffffff;
-}
-QPushButton {
-    background-color: #ffffff;
-    border: 1px solid #d1d1d1;
-    border-radius: 5px;
-    padding: 7px 15px;
-    font-weight: bold;
-    color: #1a1a1a;
-}
-QPushButton:hover {
-    background-color: #e5f3ff;
-    border-color: #0067c0;
-    color: #0067c0;
-}
-QPushButton#primaryButton {
-    background-color: #0067c0;
-    color: #ffffff;
-    border: none;
-}
-QPushButton#primaryButton:hover {
-    background-color: #1875d1;
-}
-QTableWidget, QTableView {
-    background-color: #ffffff;
-    color: #1a1a1a;
-    border: 1px solid #e5e5e5;
-    border-radius: 8px;
-    gridline-color: #f3f3f3;
-}
-QTableWidget::item {
-    background-color: #ffffff;
-    color: #1a1a1a;
-}
-QHeaderView::section {
-    background-color: #f9f9f9;
-    color: #333333;
-    padding: 8px;
-    font-weight: bold;
-    border: none;
-    border-bottom: 2px solid #e5e5e5;
-}
-QTableWidget::item:selected {
-    background-color: #0067c0;
-    color: #ffffff;
-}
-QStatusBar {
-    background-color: #f3f3f3;
-    color: #333333;
-}
-"""
-
-DARK_EMERALD_STYLE = """
-QWidget {
-    background-color: #12181f;
-    color: #e0e6ed;
-    font-family: '.AppleSystemUIFont', BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-}
-QMainWindow, QDialog, QTabWidget, QTabBar, QScrollArea {
-    background-color: #12181f;
-    color: #e0e6ed;
-}
-QLabel {
-    background-color: transparent;
-    color: #e0e6ed;
-}
-QGroupBox {
-    font-weight: bold;
-    border: 1px solid #232d38;
-    border-radius: 8px;
-    margin-top: 12px;
-    padding-top: 15px;
-    background-color: #1a222d;
-    color: #00b894;
-}
-QGroupBox::title {
-    subcontrol-origin: margin;
-    left: 12px;
-    padding: 0 6px;
-    background-color: #1a222d;
-    color: #00b894;
-}
-QLineEdit, QComboBox, QDateEdit, QTextEdit {
-    border: 1px solid #2c3846;
-    border-radius: 6px;
-    padding: 6px 10px;
-    background-color: #0f141a;
-    color: #f1f5f9;
-    selection-background-color: #00b894;
-    selection-color: #12181f;
-}
-QPushButton {
-    background-color: #232d38;
-    border: 1px solid #324050;
-    border-radius: 6px;
-    padding: 7px 15px;
-    font-weight: bold;
-    color: #e0e6ed;
-}
-QPushButton:hover {
-    background-color: #2c3846;
-    border-color: #00b894;
-    color: #00b894;
-}
-QPushButton#primaryButton {
-    background-color: #00b894;
-    color: #0a1015;
-    border: none;
-}
-QPushButton#primaryButton:hover {
-    background-color: #00dcaf;
-}
-QTableWidget, QTableView {
-    background-color: #1a222d;
-    color: #e0e6ed;
-    border: 1px solid #232d38;
-    gridline-color: #232d38;
-}
-QTableWidget::item {
-    background-color: #1a222d;
-    color: #e0e6ed;
-}
-QHeaderView::section {
-    background-color: #12181f;
-    color: #8da4be;
-    padding: 8px;
-    font-weight: bold;
-    border-bottom: 2px solid #2c3846;
-}
-QTableWidget::item:selected {
-    background-color: #00b894;
-    color: #12181f;
-}
-QStatusBar {
-    background-color: #12181f;
-    color: #8da4be;
-}
-"""
 
 
 # ==============================================================================
@@ -651,7 +470,7 @@ class MainWindow(QMainWindow):
 
         self.combo_theme = QComboBox()
         self.combo_theme.setMinimumWidth(160)
-        self.combo_theme.addItems(["☀️ Светлая тема", "🌙 Тёмная тема"])
+        self.combo_theme.addItems(["✨ Modern Light", "🌙 Modern Dark"])
         self.combo_theme.currentTextChanged.connect(self.change_theme)
 
         top_bar.addWidget(btn_gibdd)
@@ -725,13 +544,7 @@ class MainWindow(QMainWindow):
 
     def change_theme(self, theme_name: str):
         logger.info(f"Переключение темы оформления на: {theme_name}")
-        app = QApplication.instance()
-        app.setStyleSheet("")
-
-        if "Светлая" in theme_name:
-            app.setStyleSheet(FLUENT_LIGHT_STYLE)
-        elif "Тёмная" in theme_name:
-            app.setStyleSheet(DARK_EMERALD_STYLE)
+        apply_modern_theme(QApplication.instance(), theme_name)
 
     def on_search_text_changed(self, text: str):
         """Обрабатывает изменение текста в поле поиска с debounce (задержкой 300 мс)."""
@@ -844,7 +657,7 @@ def main():
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(True)
     app.setStyle("Fusion")
-    app.setStyleSheet(FLUENT_LIGHT_STYLE)
+    apply_modern_theme(app, "✨ Modern Light")
 
     _main_window = MainWindow()
     _main_window.show()
