@@ -577,7 +577,7 @@ class MainWindow(QMainWindow):
             "Email", "Адрес", "Паспорт", "Полис"
         ])
         self.patients_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.patients_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.patients_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.patients_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.patients_table.setAlternatingRowColors(True)
         self.patients_table.itemSelectionChanged.connect(self.on_patient_selected)
