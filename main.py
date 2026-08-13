@@ -1,918 +1,854 @@
-import sys
+import json
+import logging
 import os
-import sqlite3
 import re
+import ssl
+import subprocess
+import sys
+import tempfile
+import urllib.request
+import zipfile
 from datetime import datetime
-import threading
-import time
-from collections import defaultdict
-import shutil
+from typing import Optional
 
+from PyQt6.QtCore import QThread, Qt, pyqtSignal, QTimer
+from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLineEdit, QLabel, QTableWidget, QTableWidgetItem,
-    QMessageBox, QHeaderView, QTabWidget, QFrame, QFormLayout,
-    QComboBox, QTextEdit, QDateEdit, QCheckBox, QScrollArea,
-    QGroupBox, QDialog, QDialogButtonBox, QSpinBox, QDoubleSpinBox,
-    QGridLayout, QListWidget, QListWidgetItem, QAbstractItemView,
-    QStatusBar
+    QApplication,
+    QComboBox,
+    QDialog,
+    QFrame,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QLineEdit,
+    QMainWindow,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
 )
-from PyQt6.QtCore import (
-    Qt, QTimer, QThread, pyqtSignal, QSettings, QDate, QSize
-)
-from PyQt6.QtGui import (
-    QFont, QIcon, QColor, QAction, QShortcut, QKeySequence
-)
 
-# Импорт стилей (будет создан отдельно)
-try:
-    from styles.modern_style import apply_modern_theme
-except ImportError:
-    def apply_modern_theme(widget, theme_name):
-        """Заглушка, если файл стилей еще не создан"""
-        pass
+import database
+from backup import BackupThread
+from ui_client_card import ClientCardDialog
+from ui_gibdd_form import GibddFormDialog
+from ui_references import ReferencesDialog
+from ui_stats import StatsDialog
+
+APP_VERSION = "1.2.5"
+_main_window = None
 
 
-class DatabaseManager:
-    def __init__(self, db_path="patients.db"):
-        self.db_path = db_path
-        self.init_db()
+# ==============================================================================
+# 📝 НАСТРОЙКА ЛОГИРОВАНИЯ
+# ==============================================================================
 
-    def init_db(self):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+def setup_logging():
+    """Настройка логирования работы программы в папку logs."""
+    if getattr(sys, 'frozen', False):
+        base_dir = os.path.dirname(sys.executable)
+    else:
+        base_dir = os.path.dirname(os.path.abspath(__file__))
 
-        # Таблица пациентов с нормализованными полями для поиска
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS patients (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                full_name TEXT NOT NULL,
-                birth_date DATE,
-                gender TEXT,
-                phone TEXT,
-                email TEXT,
-                address TEXT,
-                passport_series TEXT,
-                passport_number TEXT,
-                insurance_policy TEXT,
-                search_fio TEXT,
-                search_passport TEXT,
-                registration_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
+    logs_dir = os.path.join(base_dir, "logs")
+    os.makedirs(logs_dir, exist_ok=True)
 
-        # Индексы для ускорения поиска
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_search_fio ON patients(search_fio)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_search_passport ON patients(search_passport)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_birth_date ON patients(birth_date)')
+    log_filename = datetime.now().strftime("app_%Y-%m-%d.log")
+    log_filepath = os.path.join(logs_dir, log_filename)
 
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS appointments (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                patient_id INTEGER,
-                appointment_date DATETIME,
-                doctor_name TEXT,
-                department TEXT,
-                status TEXT DEFAULT 'Запланирован',
-                notes TEXT,
-                FOREIGN KEY (patient_id) REFERENCES patients (id)
-            )
-        ''')
+    logger = logging.getLogger("MIG_NN")
+    logger.setLevel(logging.INFO)
 
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS medical_records (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                patient_id INTEGER,
-                record_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                diagnosis TEXT,
-                treatment TEXT,
-                doctor_notes TEXT,
-                FOREIGN KEY (patient_id) REFERENCES patients (id)
-            )
-        ''')
+    if logger.hasHandlers():
+        logger.handlers.clear()
 
-        conn.commit()
-        conn.close()
+    file_handler = logging.FileHandler(log_filepath, encoding="utf-8")
+    formatter = logging.Formatter(
+        "[%(asctime)s] [%(levelname)s] [%(name)s]: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    )
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
 
-    def normalize_fio(self, fio):
-        """Нормализация ФИО для поиска (нижний регистр, удаление лишних пробелов)"""
-        if not fio:
-            return ""
-        return ' '.join(fio.lower().split())
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
 
-    def normalize_passport(self, series, number):
-        """Нормализация паспорта для поиска (только цифры)"""
-        result = ""
-        if series:
-            result += ''.join(filter(str.isdigit, series))
-        if number:
-            result += ''.join(filter(str.isdigit, number))
-        return result
+    logger.info("=" * 60)
+    logger.info(f"Запуск МИС МИГ-НН (Версия {APP_VERSION})")
+    logger.info(f"Рабочая директория: {base_dir}")
+    logger.info(f"Файл лога: {log_filepath}")
+    logger.info("=" * 60)
 
-    def add_patient(self, data):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-
-        search_fio = self.normalize_fio(data['full_name'])
-        search_passport = self.normalize_passport(data.get('passport_series'), data.get('passport_number'))
-
-        cursor.execute('''
-            INSERT INTO patients (
-                full_name, birth_date, gender, phone, email, 
-                address, passport_series, passport_number, 
-                insurance_policy, search_fio, search_passport
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            data['full_name'], data['birth_date'], data['gender'],
-            data['phone'], data['email'], data['address'],
-            data.get('passport_series'), data.get('passport_number'),
-            data.get('insurance_policy'), search_fio, search_passport
-        ))
-
-        patient_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
-        return patient_id
-
-    def get_patients(self, search_query=None):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-
-        if search_query and len(search_query) >= 2:
-            normalized_query = self.normalize_fio(search_query)
-            query = '''
-                SELECT * FROM patients 
-                WHERE search_fio LIKE ? OR phone LIKE ? OR email LIKE ? OR search_passport LIKE ?
-            '''
-            search_term = f"%{normalized_query}%"
-            cursor.execute(query, (search_term, search_term, search_term, search_term))
-        else:
-            cursor.execute("SELECT * FROM patients ORDER BY registration_date DESC")
-
-        results = cursor.fetchall()
-        conn.close()
-        return results
-
-    def get_patient_by_id(self, patient_id):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM patients WHERE id = ?", (patient_id,))
-        result = cursor.fetchone()
-        conn.close()
-        return result
-
-    def update_patient(self, patient_id, data):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-
-        search_fio = self.normalize_fio(data['full_name'])
-        search_passport = self.normalize_passport(data.get('passport_series'), data.get('passport_number'))
-
-        cursor.execute('''
-            UPDATE patients SET
-                full_name = ?, birth_date = ?, gender = ?, phone = ?,
-                email = ?, address = ?, passport_series = ?,
-                passport_number = ?, insurance_policy = ?,
-                search_fio = ?, search_passport = ?
-            WHERE id = ?
-        ''', (
-            data['full_name'], data['birth_date'], data['gender'],
-            data['phone'], data['email'], data['address'],
-            data.get('passport_series'), data.get('passport_number'),
-            data.get('insurance_policy'), search_fio, search_passport, patient_id
-        ))
-
-        conn.commit()
-        conn.close()
-
-    def delete_patient(self, patient_id):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-
-        cursor.execute("DELETE FROM appointments WHERE patient_id = ?", (patient_id,))
-        cursor.execute("DELETE FROM medical_records WHERE patient_id = ?", (patient_id,))
-        cursor.execute("DELETE FROM patients WHERE id = ?", (patient_id,))
-
-        conn.commit()
-        conn.close()
-
-    def check_duplicate_patient(self, full_name, birth_date, exclude_id=None):
-        """Проверка на дубликаты по ФИО и дате рождения"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-
-        if exclude_id:
-            cursor.execute(
-                "SELECT COUNT(*) FROM patients WHERE full_name = ? AND birth_date = ? AND id != ?",
-                (full_name, birth_date, exclude_id)
-            )
-        else:
-            cursor.execute(
-                "SELECT COUNT(*) FROM patients WHERE full_name = ? AND birth_date = ?",
-                (full_name, birth_date)
-            )
-
-        count = cursor.fetchone()[0]
-        conn.close()
-        return count > 0
-
-    def add_appointment(self, patient_id, appointment_data):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-
-        cursor.execute('''
-            INSERT INTO appointments (
-                patient_id, appointment_date, doctor_name, 
-                department, status, notes
-            ) VALUES (?, ?, ?, ?, ?, ?)
-        ''', (
-            patient_id, appointment_data['date'],
-            appointment_data['doctor'], appointment_data['department'],
-            appointment_data['status'], appointment_data['notes']
-        ))
-
-        appointment_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
-        return appointment_id
-
-    def get_appointments_for_patient(self, patient_id):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT * FROM appointments WHERE patient_id = ? ORDER BY appointment_date DESC",
-            (patient_id,)
-        )
-        results = cursor.fetchall()
-        conn.close()
-        return results
-
-    def get_medical_records_for_patient(self, patient_id):
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT * FROM medical_records WHERE patient_id = ? ORDER BY record_date DESC",
-            (patient_id,)
-        )
-        results = cursor.fetchall()
-        conn.close()
-        return results
+    return logger
 
 
-class BackupThread(QThread):
-    """Фоновый поток для автоматического бэкапа базы данных"""
-    backup_finished = pyqtSignal(str)
-    backup_error = pyqtSignal(str)
+logger = setup_logging()
 
-    def __init__(self, db_path, backup_interval=300):
+
+def log_uncaught_exceptions(exctype, value, traceback):
+    logger.critical("Неперехваченная критическая ошибка!", exc_info=(exctype, value, traceback))
+    sys.__excepthook__(exctype, value, traceback)
+
+
+sys.excepthook = log_uncaught_exceptions
+
+
+# ==============================================================================
+# 🎨 СТИЛИ ОФОРМЛЕНИЯ
+# ==============================================================================
+
+FLUENT_LIGHT_STYLE = """
+QWidget {
+    background-color: #f3f3f3;
+    color: #1a1a1a;
+    font-family: '.AppleSystemUIFont', BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+}
+QMainWindow, QDialog, QTabWidget, QTabBar, QScrollArea {
+    background-color: #f3f3f3;
+    color: #1a1a1a;
+}
+QLabel {
+    background-color: transparent;
+    color: #1a1a1a;
+}
+QGroupBox {
+    font-weight: bold;
+    border: 1px solid #e5e5e5;
+    border-radius: 8px;
+    margin-top: 12px;
+    padding-top: 16px;
+    background-color: #ffffff;
+    color: #0067c0;
+}
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 12px;
+    padding: 0 4px;
+    background-color: #ffffff;
+    color: #0067c0;
+}
+QLineEdit, QComboBox, QDateEdit, QTextEdit {
+    border: 1px solid #d1d1d1;
+    border-bottom: 2px solid #0067c0;
+    border-radius: 4px;
+    padding: 6px 10px;
+    background-color: #ffffff;
+    color: #1a1a1a;
+    selection-background-color: #0067c0;
+    selection-color: #ffffff;
+}
+QPushButton {
+    background-color: #ffffff;
+    border: 1px solid #d1d1d1;
+    border-radius: 5px;
+    padding: 7px 15px;
+    font-weight: bold;
+    color: #1a1a1a;
+}
+QPushButton:hover {
+    background-color: #e5f3ff;
+    border-color: #0067c0;
+    color: #0067c0;
+}
+QPushButton#primaryButton {
+    background-color: #0067c0;
+    color: #ffffff;
+    border: none;
+}
+QPushButton#primaryButton:hover {
+    background-color: #1875d1;
+}
+QTableWidget, QTableView {
+    background-color: #ffffff;
+    color: #1a1a1a;
+    border: 1px solid #e5e5e5;
+    border-radius: 8px;
+    gridline-color: #f3f3f3;
+}
+QTableWidget::item {
+    background-color: #ffffff;
+    color: #1a1a1a;
+}
+QHeaderView::section {
+    background-color: #f9f9f9;
+    color: #333333;
+    padding: 8px;
+    font-weight: bold;
+    border: none;
+    border-bottom: 2px solid #e5e5e5;
+}
+QTableWidget::item:selected {
+    background-color: #0067c0;
+    color: #ffffff;
+}
+QStatusBar {
+    background-color: #f3f3f3;
+    color: #333333;
+}
+"""
+
+DARK_EMERALD_STYLE = """
+QWidget {
+    background-color: #12181f;
+    color: #e0e6ed;
+    font-family: '.AppleSystemUIFont', BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+}
+QMainWindow, QDialog, QTabWidget, QTabBar, QScrollArea {
+    background-color: #12181f;
+    color: #e0e6ed;
+}
+QLabel {
+    background-color: transparent;
+    color: #e0e6ed;
+}
+QGroupBox {
+    font-weight: bold;
+    border: 1px solid #232d38;
+    border-radius: 8px;
+    margin-top: 12px;
+    padding-top: 15px;
+    background-color: #1a222d;
+    color: #00b894;
+}
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 12px;
+    padding: 0 6px;
+    background-color: #1a222d;
+    color: #00b894;
+}
+QLineEdit, QComboBox, QDateEdit, QTextEdit {
+    border: 1px solid #2c3846;
+    border-radius: 6px;
+    padding: 6px 10px;
+    background-color: #0f141a;
+    color: #f1f5f9;
+    selection-background-color: #00b894;
+    selection-color: #12181f;
+}
+QPushButton {
+    background-color: #232d38;
+    border: 1px solid #324050;
+    border-radius: 6px;
+    padding: 7px 15px;
+    font-weight: bold;
+    color: #e0e6ed;
+}
+QPushButton:hover {
+    background-color: #2c3846;
+    border-color: #00b894;
+    color: #00b894;
+}
+QPushButton#primaryButton {
+    background-color: #00b894;
+    color: #0a1015;
+    border: none;
+}
+QPushButton#primaryButton:hover {
+    background-color: #00dcaf;
+}
+QTableWidget, QTableView {
+    background-color: #1a222d;
+    color: #e0e6ed;
+    border: 1px solid #232d38;
+    gridline-color: #232d38;
+}
+QTableWidget::item {
+    background-color: #1a222d;
+    color: #e0e6ed;
+}
+QHeaderView::section {
+    background-color: #12181f;
+    color: #8da4be;
+    padding: 8px;
+    font-weight: bold;
+    border-bottom: 2px solid #2c3846;
+}
+QTableWidget::item:selected {
+    background-color: #00b894;
+    color: #12181f;
+}
+QStatusBar {
+    background-color: #12181f;
+    color: #8da4be;
+}
+"""
+
+
+# ==============================================================================
+# 🔄 ПОТОК И ДИАЛОГ НАГЛЯДНОГО СКАЧИВАНИЯ ОБНОВЛЕНИЙ
+# ==============================================================================
+
+class DownloadThread(QThread):
+    progress_changed = pyqtSignal(int, int)  # downloaded_bytes, total_bytes
+    download_finished = pyqtSignal(str)     # path to downloaded file
+    download_failed = pyqtSignal(str)       # error message
+
+    def __init__(self, download_url, dest_path, expected_hash: Optional[str] = None):
         super().__init__()
-        self.db_path = db_path
-        self.backup_interval = backup_interval
-        self.daemon = True
+        self.download_url = download_url
+        self.dest_path = dest_path
+        self.expected_hash = expected_hash
 
     def run(self):
-        while True:
-            try:
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                backup_dir = "backups"
-                os.makedirs(backup_dir, exist_ok=True)
-                backup_file = os.path.join(backup_dir, f"backup_{timestamp}.db")
+        # Используем стандартный SSL-контекст с проверкой сертификатов
+        ssl_context = ssl.create_default_context()
 
-                shutil.copy2(self.db_path, backup_file)
+        class CustomRedirectHandler(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                new_req = super().redirect_request(req, fp, code, msg, headers, newurl)
+                if new_req:
+                    new_req.add_header(
+                        'User-Agent',
+                        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                    )
+                return new_req
 
-                self.backup_finished.emit(f"Бэкап создан: {backup_file}")
-
-                # Ротация бэкапов (хранить последние 10)
-                self.rotate_backups(backup_dir, max_backups=10)
-
-            except Exception as e:
-                self.backup_error.emit(f"Ошибка бэкапа: {str(e)}")
-
-            time.sleep(self.backup_interval)
-
-    def rotate_backups(self, backup_dir, max_backups=10):
-        """Удаление старых бэкапов"""
         try:
-            backups = sorted(
-                [os.path.join(backup_dir, f) for f in os.listdir(backup_dir) if f.startswith('backup_')],
-                key=os.path.getmtime
+            https_handler = urllib.request.HTTPSHandler(context=ssl_context)
+            opener = urllib.request.build_opener(CustomRedirectHandler(), https_handler)
+
+            req = urllib.request.Request(
+                self.download_url,
+                headers={
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': '*/*'
+                }
             )
-            while len(backups) > max_backups:
-                os.remove(backups.pop(0))
+
+            with opener.open(req, timeout=30) as response:
+                total_size = int(response.headers.get('content-length', 0))
+                downloaded = 0
+                chunk_size = 1024 * 64
+
+                with open(self.dest_path, 'wb') as out_file:
+                    while True:
+                        chunk = response.read(chunk_size)
+                        if not chunk:
+                            break
+                        out_file.write(chunk)
+                        downloaded += len(chunk)
+                        self.progress_changed.emit(downloaded, total_size)
+
+            # Проверяем хеш файла, если он указан
+            if self.expected_hash:
+                import hashlib
+                sha256 = hashlib.sha256()
+                with open(self.dest_path, 'rb') as f:
+                    for block in iter(lambda: f.read(65536), b''):
+                        sha256.update(block)
+                actual_hash = sha256.hexdigest()
+                if actual_hash != self.expected_hash:
+                    os.remove(self.dest_path)
+                    self.download_failed.emit(f"Хеш файла не совпадает! Ожидался: {self.expected_hash}, получен: {actual_hash}")
+                    return
+
+            self.download_finished.emit(self.dest_path)
         except Exception as e:
-            self.backup_error.emit(f"Ошибка ротации бэкапов: {str(e)}")
+            self.download_failed.emit(str(e))
 
 
-class PatientRegistrationDialog(QDialog):
-    def __init__(self, parent=None, patient_data=None):
+class UpdateProgressDialog(QDialog):
+    """Окно с наглядным прогрессом скачивания обновления."""
+
+    def __init__(self, download_url, parent=None):
         super().__init__(parent)
-        self.patient_data = patient_data
-        self.init_ui()
+        self.setWindowTitle("Загрузка обновления...")
+        self.setFixedSize(420, 160)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowCloseButtonHint)
 
-        if patient_data:
-            self.load_patient_data()
+        self.download_url = download_url
+        self.downloaded_file = None
+        self.expected_hash = None
 
-    def init_ui(self):
-        self.setWindowTitle("Регистрация пациента" if not self.patient_data else "Редактировать пациента")
-        self.setModal(True)
-        self.setMinimumWidth(500)
+        layout = QVBoxLayout(self)
 
-        layout = QFormLayout()
+        self.lbl_status = QLabel("Подготовка к скачиванию...")
+        self.lbl_status.setStyleSheet("font-weight: bold;")
 
-        self.full_name_edit = QLineEdit()
-        self.birth_date_edit = QDateEdit()
-        self.birth_date_edit.setCalendarPopup(True)
-        self.birth_date_edit.setDate(QDate.currentDate().addYears(-30))
-        self.birth_date_edit.setDisplayFormat("dd.MM.yyyy")
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setStyleSheet("QProgressBar::chunk { background-color: #0067c0; }")
 
-        self.gender_combo = QComboBox()
-        self.gender_combo.addItems(["Мужской", "Женский"])
+        self.lbl_details = QLabel("0 MB / 0 MB")
+        self.lbl_details.setAlignment(Qt.AlignmentFlag.AlignRight)
 
-        self.phone_edit = QLineEdit()
-        self.phone_edit.setPlaceholderText("+7 (___) ___-__-__")
+        layout.addWidget(self.lbl_status)
+        layout.addWidget(self.progress_bar)
+        layout.addWidget(self.lbl_details)
 
-        self.email_edit = QLineEdit()
-        self.email_edit.setPlaceholderText("example@mail.ru")
+        is_zip = download_url.lower().endswith(".zip")
+        ext = ".zip" if is_zip else ".exe"
 
-        self.address_edit = QTextEdit()
-        self.address_edit.setMaximumHeight(60)
+        temp_dir = tempfile.gettempdir()
+        self.dest_path = os.path.join(temp_dir, f"mig_update_package{ext}")
 
-        self.passport_series_edit = QLineEdit()
-        self.passport_series_edit.setPlaceholderText("0000")
-        self.passport_series_edit.setMaxLength(4)
+        self.thread = DownloadThread(download_url, self.dest_path, self.expected_hash)
+        self.thread.progress_changed.connect(self.on_progress)
+        self.thread.download_finished.connect(self.on_finished)
+        self.thread.download_failed.connect(self.on_failed)
+        self.thread.start()
 
-        self.passport_number_edit = QLineEdit()
-        self.passport_number_edit.setPlaceholderText("000000")
-        self.passport_number_edit.setMaxLength(6)
+    def on_progress(self, downloaded, total):
+        if total > 0:
+            percent = int((downloaded / total) * 100)
+            self.progress_bar.setValue(percent)
+            mb_downloaded = downloaded / (1024 * 1024)
+            mb_total = total / (1024 * 1024)
+            self.lbl_status.setText(f"Загрузка обновления: {percent}%")
+            self.lbl_details.setText(f"{mb_downloaded:.1f} MB из {mb_total:.1f} MB")
+        else:
+            mb_downloaded = downloaded / (1024 * 1024)
+            self.lbl_status.setText("Загрузка обновления...")
+            self.lbl_details.setText(f"{mb_downloaded:.1f} MB")
 
-        self.insurance_policy_edit = QLineEdit()
-        self.insurance_policy_edit.setPlaceholderText("000-000-000 00")
-
-        layout.addRow("ФИО*", self.full_name_edit)
-        layout.addRow("Дата рождения", self.birth_date_edit)
-        layout.addRow("Пол", self.gender_combo)
-        layout.addRow("Телефон", self.phone_edit)
-        layout.addRow("Email", self.email_edit)
-        layout.addRow("Адрес", self.address_edit)
-        layout.addRow("Серия паспорта", self.passport_series_edit)
-        layout.addRow("Номер паспорта", self.passport_number_edit)
-        layout.addRow("Полис ОМС", self.insurance_policy_edit)
-
-        button_box = QDialogButtonBox(
-            QDialogButtonBox.Ok | QDialogButtonBox.Cancel
-        )
-        button_box.accepted.connect(self.validate_and_accept)
-        button_box.rejected.connect(self.reject)
-
-        layout.addRow(button_box)
-        self.setLayout(layout)
-
-    def load_patient_data(self):
-        self.full_name_edit.setText(self.patient_data[1])
-        if self.patient_data[2]:
-            date = QDate.fromString(self.patient_data[2], "yyyy-MM-dd")
-            if date.isValid():
-                self.birth_date_edit.setDate(date)
-        self.gender_combo.setCurrentText(self.patient_data[3] or "")
-        self.phone_edit.setText(self.patient_data[4] or "")
-        self.email_edit.setText(self.patient_data[5] or "")
-        self.address_edit.setPlainText(self.patient_data[6] or "")
-        self.passport_series_edit.setText(self.patient_data[7] or "")
-        self.passport_number_edit.setText(self.patient_data[8] or "")
-        self.insurance_policy_edit.setText(self.patient_data[9] or "")
-
-    def validate_and_accept(self):
-        if not self.full_name_edit.text().strip():
-            QMessageBox.warning(self, "Ошибка", "Поле ФИО обязательно для заполнения")
-            return
-
-        if not self.birth_date_edit.date().isValid():
-            QMessageBox.warning(self, "Ошибка", "Некорректная дата рождения")
-            return
-
+    def on_finished(self, downloaded_file):
+        self.downloaded_file = downloaded_file
         self.accept()
 
-    def get_patient_data(self):
-        return {
-            'full_name': self.full_name_edit.text().strip(),
-            'birth_date': self.birth_date_edit.date().toString("yyyy-MM-dd"),
-            'gender': self.gender_combo.currentText(),
-            'phone': self.phone_edit.text().strip(),
-            'email': self.email_edit.text().strip(),
-            'address': self.address_edit.toPlainText().strip(),
-            'passport_series': self.passport_series_edit.text().strip(),
-            'passport_number': self.passport_number_edit.text().strip(),
-            'insurance_policy': self.insurance_policy_edit.text().strip()
-        }
+    def on_failed(self, error_msg):
+        logger.error(f"Ошибка загрузки обновления: {error_msg}")
+        QMessageBox.critical(self, "Ошибка скачивания", f"Не удалось скачать обновление:\n{error_msg}")
+        self.reject()
 
 
-class AppointmentDialog(QDialog):
+class AboutDialog(QDialog):
+    """Диалоговое окно Информация о программе и проверка обновлений."""
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.init_ui()
+        self.setWindowTitle("О программе")
+        self.setFixedSize(400, 240)
 
-    def init_ui(self):
-        self.setWindowTitle("Назначить визит")
-        self.setModal(True)
-        self.setMinimumWidth(400)
+        layout = QVBoxLayout(self)
 
-        layout = QFormLayout()
+        title = QLabel("Медицинская информационная система")
+        title.setStyleSheet("font-size: 14px; font-weight: bold; color: #0067c0;")
+        subtitle = QLabel("Модуль оформления медосвидетельствований (МИГ-НН)")
 
-        self.appointment_date = QDateEdit()
-        self.appointment_date.setCalendarPopup(True)
-        self.appointment_date.setDate(QDate.currentDate())
-        self.appointment_date.setDisplayFormat("dd.MM.yyyy HH:mm")
+        ver_label = QLabel(f"<b>Версия программы:</b> {APP_VERSION}")
+        dev_label = QLabel("<b>Разработчик:</b> Нижний Новгород")
 
-        self.doctor_edit = QLineEdit()
-        self.department_edit = QLineEdit()
-        self.status_combo = QComboBox()
-        self.status_combo.addItems(["Запланирован", "Подтвержден", "Отменен", "Завершен"])
-        self.notes_edit = QTextEdit()
-        self.notes_edit.setMaximumHeight(60)
+        btn_check_update = QPushButton("🔄 Проверить обновления")
+        btn_check_update.clicked.connect(self.check_updates)
 
-        layout.addRow("Дата и время визита", self.appointment_date)
-        layout.addRow("Врач", self.doctor_edit)
-        layout.addRow("Отделение", self.department_edit)
-        layout.addRow("Статус", self.status_combo)
-        layout.addRow("Примечания", self.notes_edit)
+        btn_close = QPushButton("Закрыть")
+        btn_close.clicked.connect(self.accept)
 
-        button_box = QDialogButtonBox(
-            QDialogButtonBox.Ok | QDialogButtonBox.Cancel
-        )
-        button_box.accepted.connect(self.accept)
-        button_box.rejected.connect(self.reject)
+        layout.addWidget(title)
+        layout.addWidget(subtitle)
+        layout.addSpacing(10)
+        layout.addWidget(ver_label)
+        layout.addWidget(dev_label)
+        layout.addSpacing(15)
+        layout.addWidget(btn_check_update)
+        layout.addWidget(btn_close)
 
-        layout.addRow(button_box)
-        self.setLayout(layout)
+    def parse_version(self, v_str: str) -> tuple:
+        """Преобразует строку версии ('1.2.2') в численный кортеж (1, 2, 2)."""
+        try:
+            return tuple(map(int, re.findall(r'\d+', str(v_str))))
+        except Exception:
+            return (0, 0, 0)
 
-    def get_appointment_data(self):
-        return {
-            'date': self.appointment_date.dateTime().toString("yyyy-MM-dd HH:mm:ss"),
-            'doctor': self.doctor_edit.text().strip(),
-            'department': self.department_edit.text().strip(),
-            'status': self.status_combo.currentText(),
-            'notes': self.notes_edit.toPlainText().strip()
-        }
+    def check_updates(self):
+        """Проверка наличия обновлений через raw.githubusercontent.com."""
+        logger.info("Запуск процедуры проверки обновлений...")
 
+        raw_version_url = "https://raw.githubusercontent.com/kreonike/mig_nn/main/version.json"
+        # Используем стандартный SSL-контекст с проверкой сертификатов
+        ssl_context = ssl.create_default_context()
 
-class MedicalRecordDialog(QDialog):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.init_ui()
+        try:
+            req = urllib.request.Request(
+                raw_version_url,
+                headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+            )
+            with urllib.request.urlopen(req, context=ssl_context, timeout=5) as response:
+                if response.status == 200:
+                    data = json.loads(response.read().decode('utf-8'))
+                    latest_version = data.get('version', '').strip()
+                    download_url = data.get('download_url', '').strip()
+                    changelog = data.get('changelog', '')
+                    file_hash = data.get('sha256', '')  # SHA-256 хеш файла
 
-    def init_ui(self):
-        self.setWindowTitle("Медицинская карта")
-        self.setModal(True)
-        self.setMinimumWidth(500)
+                    logger.info(f"Получен ответ с сервера. Актуальная версия на GitHub: {latest_version}")
 
-        layout = QVBoxLayout()
+                    if latest_version and self.parse_version(latest_version) > self.parse_version(APP_VERSION):
+                        logger.info(f"Найдена новая версия ({latest_version} > {APP_VERSION}).")
+                        msg = f"Найдена новая версия: <b>{latest_version}</b>!\nТекущая версия: {APP_VERSION}\n\n"
+                        if changelog:
+                            msg += f"<b>Что нового:</b>\n{changelog}\n\n"
+                        msg += "Хотите обновиться сейчас?"
 
-        form_layout = QFormLayout()
+                        reply = QMessageBox.question(
+                            self, "Доступно обновление", msg,
+                            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                        )
 
-        self.diagnosis_edit = QTextEdit()
-        self.diagnosis_edit.setMaximumHeight(80)
+                        if reply == QMessageBox.StandardButton.Yes:
+                            self.run_auto_update(download_url, file_hash)
+                    else:
+                        logger.info("Установлена самая свежая версия программы.")
+                        QMessageBox.information(
+                            self, "Проверка обновлений",
+                            f"У вас установлена самая свежая версия программы ({APP_VERSION})."
+                        )
+                else:
+                    logger.error(f"Сервер вернул статус ответа: {response.status}")
+                    raise Exception(f"Код ответа сервера: {response.status}")
+        except Exception as e:
+            logger.error(f"Ошибка при проверке обновлений: {e}", exc_info=True)
+            QMessageBox.warning(self, "Ошибка связи", f"Не удалось проверить обновления.\nПроверьте подключение к интернету.\n({e})")
 
-        self.treatment_edit = QTextEdit()
-        self.treatment_edit.setMaximumHeight(80)
+    def run_auto_update(self, download_url: str, expected_hash: str = ""):
+        """Скачивает и распаковывает обновление, перезапуская через bat-скрипт."""
+        if not getattr(sys, 'frozen', False):
+            logger.warning("Попытка запуска автообновления из исходного кода Python.")
+            QMessageBox.information(
+                self, "Режим разработки",
+                "Автообновление работает только в собранной .exe версии программы."
+            )
+            return
 
-        self.notes_edit = QTextEdit()
-        self.notes_edit.setMaximumHeight(60)
+        if not download_url:
+            logger.error("Ссылка для скачивания файла пуста!")
+            QMessageBox.critical(self, "Ошибка обновления", "Ссылка для скачивания обновления не указана в version.json.")
+            return
 
-        form_layout.addRow("Диагноз", self.diagnosis_edit)
-        form_layout.addRow("Лечение", self.treatment_edit)
-        form_layout.addRow("Примечания врача", self.notes_edit)
+        progress_dlg = UpdateProgressDialog(download_url, self)
+        progress_dlg.expected_hash = expected_hash  # Передаем хеш в диалог
+        if progress_dlg.exec() != QDialog.DialogCode.Accepted or not progress_dlg.downloaded_file:
+            return
 
-        button_box = QDialogButtonBox(
-            QDialogButtonBox.Ok | QDialogButtonBox.Cancel
-        )
-        button_box.accepted.connect(self.accept)
-        button_box.rejected.connect(self.reject)
+        # Обновляем поток с хешем
+        progress_dlg.thread.expected_hash = expected_hash
 
-        layout.addLayout(form_layout)
-        layout.addWidget(button_box)
-        self.setLayout(layout)
+        downloaded_package = progress_dlg.downloaded_file
+        current_exe = sys.executable
+        exe_dir = os.path.dirname(current_exe)
+        target_exe_tmp = os.path.join(exe_dir, "app_update.tmp")
 
-    def get_record_data(self):
-        return {
-            'diagnosis': self.diagnosis_edit.toPlainText().strip(),
-            'treatment': self.treatment_edit.toPlainText().strip(),
-            'notes': self.notes_edit.toPlainText().strip()
-        }
+        try:
+            if downloaded_package.lower().endswith(".zip"):
+                logger.info("Распаковка ZIP-архива обновления...")
+                extract_dir = os.path.join(tempfile.gettempdir(), "mig_extracted")
+                os.makedirs(extract_dir, exist_ok=True)
+
+                with zipfile.ZipFile(downloaded_package, 'r') as zip_ref:
+                    zip_ref.extractall(extract_dir)
+
+                found_exe = None
+                for root, dirs, files in os.walk(extract_dir):
+                    for file in files:
+                        if file.endswith(".exe") and not file.startswith("unins"):
+                            found_exe = os.path.join(root, file)
+                            break
+                    if found_exe:
+                        break
+
+                if not found_exe:
+                    raise Exception("В ZIP-архиве обновления не найден файл .exe!")
+
+                import shutil
+                shutil.copy2(found_exe, target_exe_tmp)
+            else:
+                import shutil
+                shutil.copy2(downloaded_package, target_exe_tmp)
+
+            bat_file = os.path.join(exe_dir, "update.bat")
+            bat_content = f"""@echo off
+chcp 1251 > nul
+timeout /t 2 /nobreak > nul
+move /y "{target_exe_tmp}" "{current_exe}"
+start "" "{current_exe}"
+del "%~f0"
+"""
+            with open(bat_file, "w", encoding="cp1251") as f:
+                f.write(bat_content)
+
+            logger.info("Перезапуск через update.bat...")
+            QMessageBox.information(
+                self, "Обновление готово",
+                "Файлы успешно загружены. Программа перезапустится через 2 секунды."
+            )
+
+            subprocess.Popen([bat_file], shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            sys.exit(0)
+
+        except Exception as e:
+            logger.error(f"Сбой при распаковке или автозамене: {e}", exc_info=True)
+            QMessageBox.critical(self, "Ошибка обновления", f"Сбой обработки файла обновления:\n{e}")
 
 
 class MainWindow(QMainWindow):
+
     def __init__(self):
         super().__init__()
-        self.db_manager = DatabaseManager()
-        self.selected_patient_id = None
+        logger.info("Инициализация главного окна...")
+        self.setWindowTitle("Медицинская информационная система — Справки ГИБДД")
+        self.resize(1280, 760)
 
+        self.current_clients = []
         self.search_timer = QTimer()
         self.search_timer.setSingleShot(True)
-        self.search_timer.timeout.connect(self.perform_search)
+        self.search_timer.timeout.connect(self._perform_search)
+        self.search_query_cache = ""
+
+        # Запускаем бэкап в фоновом потоке
+        self.run_auto_backup()
 
         self.init_ui()
-        self.setup_shortcuts()
-        self.load_patients()
-        self.start_backup_thread()
 
-        settings = QSettings("MedicalApp", "Theme")
-        saved_theme = settings.value("theme", "✨ Modern Light")
-        self.theme_combo.setCurrentText(saved_theme)
-        apply_modern_theme(self, saved_theme)
+    def run_auto_backup(self):
+        """Выполняет автоматическое резервное копирование базы данных в фоновом потоке."""
+        logger.info("Запуск процедуры автоматического бэкапа базы данных в фоне...")
+        try:
+            db_filename = getattr(database, "DB_NAME", "mig_database.db")
+            self.backup_thread = BackupThread(db_filename, backup_dir="backups")
+            self.backup_thread.backup_complete.connect(self.on_backup_complete)
+            self.backup_thread.start()
+            logger.info("Поток бэкапа запущен")
+        except Exception as e:
+            logger.error(f"Ошибка при запуске бэкапа: {e}", exc_info=True)
+
+    def on_backup_complete(self, success: bool, message: str):
+        """Обработчик завершения бэкапа."""
+        if success:
+            logger.info(message)
+        else:
+            logger.error(message)
 
     def init_ui(self):
-        self.setWindowTitle("Медицинская система учета пациентов")
-        self.setGeometry(100, 100, 1280, 800)
-
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-
         main_layout = QVBoxLayout(central_widget)
-        main_layout.setSpacing(10)
-        main_layout.setContentsMargins(15, 15, 15, 15)
 
-        header_layout = QHBoxLayout()
-        header_layout.setSpacing(10)
+        # ---------------- 1. ВЕРХНЯЯ ПАНЕЛЬ ----------------
+        top_bar = QHBoxLayout()
 
-        self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("🔍 Поиск по ФИО, телефону или email...")
-        self.search_input.textChanged.connect(self.on_search_text_changed)
-        self.search_input.setFocus()
-        self.search_input.setMinimumWidth(300)
+        btn_gibdd = QPushButton("🚗 Справка ГИБДД")
+        btn_gibdd.setObjectName("primaryButton")
+        btn_gibdd.clicked.connect(self.open_gibdd_form)
 
-        self.add_patient_btn = QPushButton("➕ Новый пациент")
-        self.edit_patient_btn = QPushButton("✏️ Редактировать")
-        self.delete_patient_btn = QPushButton("🗑️ Удалить")
-        self.refresh_btn = QPushButton("🔄 Обновить")
+        btn_references = QPushButton("📂 Справочники")
+        btn_references.clicked.connect(self.open_references_dialog)
 
-        self.theme_combo = QComboBox()
-        self.theme_combo.addItems([
-            "System Default",
-            "✨ Modern Light",
-            "🌙 Modern Dark"
-        ])
-        self.theme_combo.currentTextChanged.connect(self.change_theme)
+        btn_stats = QPushButton("📊 Статистика")
+        btn_stats.clicked.connect(self.open_stats_dialog)
 
-        header_layout.addWidget(QLabel("Поиск:"))
-        header_layout.addWidget(self.search_input, 1)
-        header_layout.addWidget(self.add_patient_btn)
-        header_layout.addWidget(self.edit_patient_btn)
-        header_layout.addWidget(self.delete_patient_btn)
-        header_layout.addWidget(self.refresh_btn)
-        header_layout.addWidget(QLabel("Тема:"))
-        header_layout.addWidget(self.theme_combo)
+        btn_about = QPushButton("ℹ️ О программе")
+        btn_about.clicked.connect(self.open_about_dialog)
 
-        main_layout.addLayout(header_layout)
+        theme_label = QLabel("🎨 Тема:")
+        theme_label.setStyleSheet("font-weight: bold;")
 
-        self.tabs = QTabWidget()
+        self.combo_theme = QComboBox()
+        self.combo_theme.setMinimumWidth(160)
+        self.combo_theme.addItems(["☀️ Светлая тема", "🌙 Тёмная тема"])
+        self.combo_theme.currentTextChanged.connect(self.change_theme)
 
-        self.patients_tab = QWidget()
-        patients_layout = QVBoxLayout(self.patients_tab)
-        patients_layout.setContentsMargins(0, 0, 0, 0)
+        top_bar.addWidget(btn_gibdd)
+        top_bar.addWidget(btn_references)
+        top_bar.addWidget(btn_stats)
+        top_bar.addWidget(btn_about)
+        top_bar.addStretch()
+        top_bar.addWidget(theme_label)
+        top_bar.addWidget(self.combo_theme)
 
-        self.patients_table = QTableWidget()
-        self.patients_table.setColumnCount(9)
-        self.patients_table.setHorizontalHeaderLabels([
-            "ID", "ФИО", "Дата рождения", "Пол", "Телефон",
-            "Email", "Адрес", "Паспорт", "Полис"
-        ])
-        self.patients_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.patients_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.patients_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.patients_table.setAlternatingRowColors(True)
-        self.patients_table.itemSelectionChanged.connect(self.on_patient_selected)
-        self.patients_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.patients_table.customContextMenuRequested.connect(self.show_context_menu)
+        main_layout.addLayout(top_bar)
 
-        patients_layout.addWidget(self.patients_table)
-        self.tabs.addTab(self.patients_tab, "📋 Пациенты")
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setFrameShadow(QFrame.Shadow.Sunken)
+        main_layout.addWidget(line)
 
-        self.details_tab = QWidget()
-        details_layout = QVBoxLayout(self.details_tab)
-        details_layout.setSpacing(15)
-
-        details_group = QGroupBox("👤 Данные пациента")
-        details_form = QFormLayout(details_group)
-        details_form.setSpacing(8)
-
-        self.detail_name_label = QLabel("-")
-        self.detail_birth_label = QLabel("-")
-        self.detail_gender_label = QLabel("-")
-        self.detail_phone_label = QLabel("-")
-        self.detail_email_label = QLabel("-")
-        self.detail_address_label = QLabel("-")
-        self.detail_passport_label = QLabel("-")
-        self.detail_insurance_label = QLabel("-")
-
-        for label in [self.detail_name_label, self.detail_birth_label,
-                      self.detail_gender_label, self.detail_phone_label,
-                      self.detail_email_label, self.detail_address_label,
-                      self.detail_passport_label, self.detail_insurance_label]:
-            label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-
-        details_form.addRow("ФИО:", self.detail_name_label)
-        details_form.addRow("Дата рождения:", self.detail_birth_label)
-        details_form.addRow("Пол:", self.detail_gender_label)
-        details_form.addRow("Телефон:", self.detail_phone_label)
-        details_form.addRow("Email:", self.detail_email_label)
-        details_form.addRow("Адрес:", self.detail_address_label)
-        details_form.addRow("Паспорт:", self.detail_passport_label)
-        details_form.addRow("Полис ОМС:", self.detail_insurance_label)
-
-        details_layout.addWidget(details_group)
-
-        appointments_group = QGroupBox("📅 Назначения")
-        appointments_layout = QVBoxLayout(appointments_group)
-
-        self.appointments_list = QListWidget()
-        self.appointments_list.setAlternatingRowColors(True)
-        self.add_appointment_btn = QPushButton("➕ Добавить назначение")
-        self.add_appointment_btn.clicked.connect(self.add_appointment)
-
-        appointments_layout.addWidget(self.appointments_list)
-        appointments_layout.addWidget(self.add_appointment_btn)
-
-        details_layout.addWidget(appointments_group)
-
-        records_group = QGroupBox("📝 Медицинские записи")
-        records_layout = QVBoxLayout(records_group)
-
-        self.records_list = QListWidget()
-        self.records_list.setAlternatingRowColors(True)
-        self.add_record_btn = QPushButton("➕ Добавить запись")
-        self.add_record_btn.clicked.connect(self.add_medical_record)
-
-        records_layout.addWidget(self.records_list)
-        records_layout.addWidget(self.add_record_btn)
-
-        details_layout.addWidget(records_group)
-
-        self.tabs.addTab(self.details_tab, "📊 Детали")
-
-        main_layout.addWidget(self.tabs)
-
-        self.status_bar = QStatusBar()
-        self.setStatusBar(self.status_bar)
-        self.status_bar.showMessage("Готов к работе. Введите минимум 2 символа для поиска.")
-
-        self.add_patient_btn.clicked.connect(self.add_patient)
-        self.edit_patient_btn.clicked.connect(self.edit_patient)
-        self.delete_patient_btn.clicked.connect(self.delete_patient)
-        self.refresh_btn.clicked.connect(self.load_patients)
-
-    def setup_shortcuts(self):
-        QShortcut(QKeySequence("Ctrl+F"), self).activated.connect(
-            lambda: self.search_input.setFocus()
+        # ---------------- 2. ПАНЕЛЬ ПОИСКА ----------------
+        search_layout = QHBoxLayout()
+        search_label = QLabel("Поиск пациентов:")
+        search_label.setFont(
+            QFont(".AppleSystemUIFont", 11, QFont.Weight.Bold)
         )
-        QShortcut(QKeySequence("Ctrl+N"), self).activated.connect(self.add_patient)
-        QShortcut(QKeySequence("Escape"), self).activated.connect(
-            lambda: self.search_input.clear()
+
+        self.field_search = QLineEdit()
+        self.field_search.setPlaceholderText(
+            "Введите ФИО, Паспорт ('соля'), Инициалы ('сдг') или с Датой ('сдг11121981')..."
         )
-        QShortcut(QKeySequence("F5"), self).activated.connect(self.load_patients)
-        QShortcut(QKeySequence("Delete"), self).activated.connect(self.delete_patient)
+        self.field_search.setClearButtonEnabled(True)  # Кнопка ✖ для очистки
+        self.field_search.textChanged.connect(self.on_search_text_changed)
+        self.field_search.setFocus()  # Автофокус на поле поиска
 
-    def on_search_text_changed(self):
-        search_text = self.search_input.text()
+        search_layout.addWidget(search_label)
+        search_layout.addWidget(self.field_search)
 
-        if len(search_text) < 2:
+        main_layout.addLayout(search_layout)
+
+        # ---------------- 3. ТАБЛИЦА ПАЦИЕНТОВ ----------------
+        self.table_clients = QTableWidget()
+        self.table_clients.setColumnCount(5)
+        self.table_clients.setHorizontalHeaderLabels(
+            [
+                "ID",
+                "ФИО Пациента",
+                "Дата Рождения",
+                "Паспорт",
+                "Адрес проживания",
+            ]
+        )
+
+        header = self.table_clients.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+
+        self.table_clients.setSelectionBehavior(
+            QTableWidget.SelectionBehavior.SelectRows
+        )
+        self.table_clients.setEditTriggers(
+            QTableWidget.EditTrigger.NoEditTriggers
+        )
+        self.table_clients.cellDoubleClicked.connect(
+            self.on_client_double_clicked
+        )
+
+        main_layout.addWidget(self.table_clients)
+
+        self.statusBar().showMessage("Введите данные для поиска")
+
+    def change_theme(self, theme_name: str):
+        logger.info(f"Переключение темы оформления на: {theme_name}")
+        app = QApplication.instance()
+        app.setStyleSheet("")
+
+        if "Светлая" in theme_name:
+            app.setStyleSheet(FLUENT_LIGHT_STYLE)
+        elif "Тёмная" in theme_name:
+            app.setStyleSheet(DARK_EMERALD_STYLE)
+
+    def on_search_text_changed(self, text: str):
+        """Обрабатывает изменение текста в поле поиска с debounce (задержкой 300 мс)."""
+        query = text.strip()
+
+        # Не ищем при пустом запросе или меньше 2 символов
+        if len(query) < 2:
+            self.display_clients([])
+            self.statusBar().showMessage("Введите минимум 2 символа для поиска")
             self.search_timer.stop()
-            self.perform_search()
-            if len(search_text) == 1:
-                self.status_bar.showMessage("⚠️ Введите минимум 2 символа для поиска")
-            elif len(search_text) == 0:
-                self.status_bar.showMessage("Готов к работе. Введите минимум 2 символа для поиска.")
-        else:
-            self.search_timer.start(300)
-            self.status_bar.showMessage("🔍 Поиск...")
-
-    def perform_search(self):
-        search_query = self.search_input.text()
-        self.load_patients(search_query)
-
-        if len(search_query) >= 2:
-            count = self.patients_table.rowCount()
-            self.status_bar.showMessage(f"Найдено пациентов: {count}")
-
-    def load_patients(self, search_query=None):
-        patients = self.db_manager.get_patients(search_query)
-
-        self.patients_table.setRowCount(len(patients))
-        self.patients_table.setUpdatesEnabled(False)
-
-        for row_idx, patient in enumerate(patients):
-            for col_idx, value in enumerate(patient[1:9], start=0):
-                item = QTableWidgetItem(str(value) if value else "-")
-                item.setData(Qt.ItemDataRole.UserRole, patient[0])
-                self.patients_table.setItem(row_idx, col_idx, item)
-
-        self.patients_table.setUpdatesEnabled(True)
-
-    def on_patient_selected(self):
-        selected_items = self.patients_table.selectedItems()
-        if selected_items:
-            row = selected_items[0].row()
-            patient_id_item = self.patients_table.item(row, 0)
-            if patient_id_item:
-                self.selected_patient_id = patient_id_item.data(Qt.ItemDataRole.UserRole)
-                self.load_patient_details()
-
-    def load_patient_details(self):
-        if not self.selected_patient_id:
             return
 
-        patient = self.db_manager.get_patient_by_id(self.selected_patient_id)
-        if patient:
-            self.detail_name_label.setText(patient[1] or "-")
-            self.detail_birth_label.setText(patient[2] or "-")
-            self.detail_gender_label.setText(patient[3] or "-")
-            self.detail_phone_label.setText(patient[4] or "-")
-            self.detail_email_label.setText(patient[5] or "-")
-            self.detail_address_label.setText(patient[6] or "-")
+        # Кэшируем запрос и перезапускаем таймер
+        self.search_query_cache = query
+        self.search_timer.start(300)  # Debounce 300 мс
 
-            passport_info = ""
-            if patient[7] and patient[8]:
-                passport_info = f"{patient[7]} {patient[8]}"
-            elif patient[7]:
-                passport_info = patient[7]
-            elif patient[8]:
-                passport_info = patient[8]
-            self.detail_passport_label.setText(passport_info or "-")
+    def _perform_search(self):
+        """Выполняет поиск по кэшированному запросу."""
+        query = self.search_query_cache
+        logger.info(f"Поиск пациентов по запросу: '{query}'")
 
-            self.detail_insurance_label.setText(patient[9] or "-")
+        try:
+            results = database.search_clients_for_completer(query, limit=200)
+            self.display_clients(results)
 
-            appointments = self.db_manager.get_appointments_for_patient(self.selected_patient_id)
-            self.appointments_list.clear()
-            for appt in appointments:
-                item_text = f"{appt[2][:16]} - {appt[4]} ({appt[5]})"
-                item = QListWidgetItem(item_text)
-                item.setData(Qt.ItemDataRole.UserRole, appt[0])
-                self.appointments_list.addItem(item)
+            if results:
+                self.statusBar().showMessage(f"Найдено пациентов: {len(results)}")
+            else:
+                self.statusBar().showMessage("Пациенты не найдены")
+        except Exception as e:
+            logger.error(f"Ошибка при выполнении поиска в базе данных: {e}", exc_info=True)
+            self.statusBar().showMessage("Ошибка поиска")
 
-            records = self.db_manager.get_medical_records_for_patient(self.selected_patient_id)
-            self.records_list.clear()
-            for record in records:
-                item_text = f"{record[2][:16]} - {record[3][:40] if record[3] else 'Без диагноза'}..."
-                item = QListWidgetItem(item_text)
-                item.setData(Qt.ItemDataRole.UserRole, record[0])
-                self.records_list.addItem(item)
+    def display_clients(self, clients: list):
+        self.current_clients = clients
+        self.table_clients.setRowCount(len(clients))
 
-    def show_context_menu(self, position):
-        menu = self.patients_table.createStandardContextMenu()
-        menu.addSeparator()
+        for row, c in enumerate(clients):
+            fio = f"{c.get('Фамилия', '')} {c.get('Имя', '')} {c.get('Отчество', '')}".strip()
+            birth_raw = str(c.get("ДатаРождения") or "")
+            birth = self.format_date(birth_raw)
+            passport = (
+                f"{c.get('СерПасп', '')} {c.get('ПспНом', '')}".strip()
+            )
+            address = f"{c.get('Город', '')}, {c.get('Улица', '')} д.{c.get('Дом', '')} кв.{c.get('Квартира', '')}".strip(
+                " ,."
+            )
 
-        edit_action = menu.addAction("✏️ Редактировать")
-        edit_action.triggered.connect(self.edit_patient)
+            # Скрываем ID в UserRole, делаем колонку узкой
+            id_item = QTableWidgetItem(str(c["id"]))
+            id_item.setData(Qt.ItemDataRole.UserRole, c["id"])
+            self.table_clients.setItem(row, 0, id_item)
 
-        delete_action = menu.addAction("🗑️ Удалить")
-        delete_action.triggered.connect(self.delete_patient)
+            self.table_clients.setItem(row, 1, QTableWidgetItem(fio))
+            self.table_clients.setItem(row, 2, QTableWidgetItem(birth))
+            self.table_clients.setItem(row, 3, QTableWidgetItem(passport))
+            self.table_clients.setItem(row, 4, QTableWidgetItem(address))
 
-        menu.exec_(self.patients_table.viewport().mapToGlobal(position))
+        # Показываем подсказку при пустом результате
+        if not clients:
+            self.statusBar().showMessage("Начните вводить запрос для поиска пациентов (минимум 2 символа)")
 
-    def add_patient(self):
-        dialog = PatientRegistrationDialog(self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            patient_data = dialog.get_patient_data()
+    def format_date(self, raw_str: str) -> str:
+        if not raw_str or len(raw_str) < 8:
+            return raw_str
+        clean = raw_str.split()[0]
+        if "-" in clean:
+            parts = clean.split("-")
+            if len(parts) == 3 and len(parts[0]) == 4:
+                return f"{parts[2].zfill(2)}.{parts[1].zfill(2)}.{parts[0]}"
+        return clean
 
-            if self.db_manager.check_duplicate_patient(
-                    patient_data['full_name'],
-                    patient_data['birth_date']
-            ):
-                reply = QMessageBox.question(
-                    self, "⚠️ Дубликат обнаружен",
-                    "Пациент с такими ФИО и датой рождения уже существует.\n\n"
-                    "Продолжить регистрацию?",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-                )
-                if reply == QMessageBox.StandardButton.No:
-                    return
+    def on_client_double_clicked(self, row: int, col: int):
+        if 0 <= row < len(self.current_clients):
+            client = self.current_clients[row]
+            logger.info(f"Открытие карточки пациента ID: {client['id']}")
+            dialog = ClientCardDialog(client["id"], self)
+            if dialog.exec():
+                # Обновляем результаты поиска после редактирования карточки
+                self.on_search_text_changed(self.field_search.text())
 
-            self.db_manager.add_patient(patient_data)
-            self.load_patients()
-            self.status_bar.showMessage("✅ Пациент успешно добавлен!")
+    def open_gibdd_form(self):
+        logger.info("Открытие формы создания справки ГИБДД...")
+        dialog = GibddFormDialog(self)
+        dialog.exec()
 
-    def edit_patient(self):
-        if not self.selected_patient_id:
-            QMessageBox.warning(self, "Ошибка", "Выберите пациента для редактирования")
-            return
+    def open_references_dialog(self):
+        logger.info("Открытие окна справочников...")
+        dialog = ReferencesDialog(self)
+        dialog.exec()
 
-        patient = self.db_manager.get_patient_by_id(self.selected_patient_id)
-        if patient:
-            dialog = PatientRegistrationDialog(self, patient)
-            if dialog.exec() == QDialog.DialogCode.Accepted:
-                patient_data = dialog.get_patient_data()
+    def open_stats_dialog(self):
+        logger.info("Открытие окна статистики...")
+        dialog = StatsDialog(self)
+        dialog.exec()
 
-                if self.db_manager.check_duplicate_patient(
-                        patient_data['full_name'],
-                        patient_data['birth_date'],
-                        exclude_id=self.selected_patient_id
-                ):
-                    reply = QMessageBox.question(
-                        self, "⚠️ Дубликат обнаружен",
-                        "Пациент с такими данными уже существует.\n\nПродолжить?",
-                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-                    )
-                    if reply == QMessageBox.StandardButton.No:
-                        return
+    def open_about_dialog(self):
+        logger.info("Открытие окна 'О программе'...")
+        dialog = AboutDialog(self)
+        dialog.exec()
 
-                self.db_manager.update_patient(self.selected_patient_id, patient_data)
-                self.load_patients()
-                self.load_patient_details()
-                self.status_bar.showMessage("✅ Данные пациента обновлены!")
-
-    def delete_patient(self):
-        if not self.selected_patient_id:
-            QMessageBox.warning(self, "Ошибка", "Выберите пациента для удаления")
-            return
-
-        reply = QMessageBox.question(
-            self, "Подтверждение удаления",
-            "Вы уверены, что хотите удалить этого пациента и всю связанную информацию?\n\n"
-            "Это действие нельзя отменить.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-
-        if reply == QMessageBox.StandardButton.Yes:
-            self.db_manager.delete_patient(self.selected_patient_id)
-            self.load_patients()
-            self.clear_patient_details()
-            self.status_bar.showMessage("🗑️ Пациент удален!")
-
-    def clear_patient_details(self):
-        self.selected_patient_id = None
-        self.detail_name_label.setText("-")
-        self.detail_birth_label.setText("-")
-        self.detail_gender_label.setText("-")
-        self.detail_phone_label.setText("-")
-        self.detail_email_label.setText("-")
-        self.detail_address_label.setText("-")
-        self.detail_passport_label.setText("-")
-        self.detail_insurance_label.setText("-")
-        self.appointments_list.clear()
-        self.records_list.clear()
-
-    def add_appointment(self):
-        if not self.selected_patient_id:
-            QMessageBox.warning(self, "Ошибка", "Выберите пациента")
-            return
-
-        dialog = AppointmentDialog(self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            appointment_data = dialog.get_appointment_data()
-            self.db_manager.add_appointment(self.selected_patient_id, appointment_data)
-            self.load_patient_details()
-            self.status_bar.showMessage("✅ Назначение добавлено!")
-
-    def add_medical_record(self):
-        if not self.selected_patient_id:
-            QMessageBox.warning(self, "Ошибка", "Выберите пациента")
-            return
-
-        dialog = MedicalRecordDialog(self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            record_data = dialog.get_record_data()
-
-            conn = sqlite3.connect(self.db_manager.db_path)
-            cursor = conn.cursor()
-            cursor.execute('''
-                INSERT INTO medical_records (
-                    patient_id, diagnosis, treatment, doctor_notes
-                ) VALUES (?, ?, ?, ?)
-            ''', (
-                self.selected_patient_id, record_data['diagnosis'],
-                record_data['treatment'], record_data['notes']
-            ))
-            conn.commit()
-            conn.close()
-
-            self.load_patient_details()
-            self.status_bar.showMessage("✅ Медицинская запись добавлена!")
-
-    def change_theme(self, theme_name):
-        apply_modern_theme(self, theme_name)
-        settings = QSettings("MedicalApp", "Theme")
-        settings.setValue("theme", theme_name)
-
-    def start_backup_thread(self):
-        self.backup_thread = BackupThread(self.db_manager.db_path)
-        self.backup_thread.backup_finished.connect(
-            lambda msg: self.status_bar.showMessage(msg)
-        )
-        self.backup_thread.backup_error.connect(
-            lambda msg: QMessageBox.warning(self, "Ошибка бэкапа", msg)
-        )
-        self.backup_thread.start()
+    def closeEvent(self, event):
+        logger.info("Завершение работы приложения...")
+        event.accept()
 
 
 def main():
+    global _main_window
+    logger.info("Инициализация QApplication...")
     app = QApplication(sys.argv)
-    app.setApplicationName("Медицинская система")
-    app.setOrganizationName("MedicalApp")
+    app.setQuitOnLastWindowClosed(True)
+    app.setStyle("Fusion")
+    app.setStyleSheet(FLUENT_LIGHT_STYLE)
 
-    apply_modern_theme(app, "✨ Modern Light")
-
-    window = MainWindow()
-    window.show()
-
+    _main_window = MainWindow()
+    _main_window.show()
+    logger.info("Главное окно успешно отображено.")
     sys.exit(app.exec())
 
 
