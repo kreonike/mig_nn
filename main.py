@@ -534,6 +534,10 @@ class MainWindow(QMainWindow):
         self.table_clients.setEditTriggers(
             QTableWidget.EditTrigger.NoEditTriggers
         )
+        self.table_clients.setSelectionMode(
+            QTableWidget.SelectionMode.SingleSelection
+        )
+        self.table_clients.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.table_clients.cellDoubleClicked.connect(
             self.on_client_double_clicked
         )
