@@ -1,9 +1,13 @@
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
-    QDateEdit, QGroupBox, QFormLayout
+    QDateEdit, QGroupBox, QFormLayout, QFileDialog, QMessageBox
 )
 from PyQt6.QtCore import QDate, Qt
 import database
+from openpyxl import Workbook
+from openpyxl.styles import Font, Alignment, Border, Side
+from datetime import datetime
+import os
 
 
 class StatsDialog(QDialog):
@@ -71,11 +75,16 @@ class StatsDialog(QDialog):
 
         main_layout.addWidget(stats_group)
 
-        # ---------------- 3. КНОПКА ЗАКРЫТИЯ ----------------
+        # ---------------- 3. КНОПКИ ЭКСПОРТА И ЗАКРЫТИЯ ----------------
+        btn_export = QPushButton("📄 Выгрузить в Excel")
+        btn_export.setStyleSheet("background-color: #28a745; color: white; font-weight: bold; padding: 8px;")
+        btn_export.clicked.connect(self.export_to_excel)
+
         btn_close = QPushButton("Закрыть")
         btn_close.clicked.connect(self.accept)
 
         btn_box = QHBoxLayout()
+        btn_box.addWidget(btn_export)
         btn_box.addStretch()
         btn_box.addWidget(btn_close)
         main_layout.addLayout(btn_box)
@@ -94,3 +103,83 @@ class StatsDialog(QDialog):
 
         self.lbl_total_count.setText(f"{res['total_count']} шт.")
         self.lbl_total_sum.setText(f"{res['total_sum']:,.2f} руб.".replace(",", " "))
+
+    def export_to_excel(self):
+        """Экспорт данных за период в Excel файл"""
+        start_date = self.date_from.date().toString("yyyy-MM-dd")
+        end_date = self.date_to.date().toString("yyyy-MM-dd")
+        
+        # Получаем данные из базы
+        data = database.get_spreadsheet_data_for_period(start_date, end_date)
+        
+        if not data:
+            QMessageBox.information(self, "Информация", "Нет данных за выбранный период.")
+            return
+        
+        # Создаем книгу Excel
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Справки"
+        
+        # Заголовки столбцов
+        headers = [
+            "Номер выданной справки",
+            "Дата выдачи",
+            "До какого действительна",
+            "Фамилия",
+            "Имя",
+            "Отчество",
+            "Дата рождения",
+            "Адрес",
+            "Заключение (годен/не годен)",
+            "Примечание"
+        ]
+        
+        # Стили для заголовков
+        bold_font = Font(bold=True)
+        center_alignment = Alignment(horizontal="center", vertical="center")
+        thin_border = Border(
+            left=Side(style='thin'),
+            right=Side(style='thin'),
+            top=Side(style='thin'),
+            bottom=Side(style='thin')
+        )
+        
+        # Добавляем заголовки
+        for col_num, header in enumerate(headers, 1):
+            cell = ws.cell(row=1, column=col_num, value=header)
+            cell.font = bold_font
+            cell.alignment = center_alignment
+            cell.border = thin_border
+        
+        # Автоширина колонок
+        column_widths = [15, 12, 15, 20, 15, 20, 12, 30, 15, 25]
+        for i, width in enumerate(column_widths, 1):
+            ws.column_dimensions[chr(64 + i) if i <= 26 else f"{chr(64 + i//26)}{chr(64 + i%26)}"].width = width
+        
+        # Заполняем данными
+        for row_num, row_data in enumerate(data, 2):
+            for col_num, value in enumerate(row_data, 1):
+                cell = ws.cell(row=row_num, column=col_num, value=value)
+                cell.border = thin_border
+                cell.alignment = Alignment(vertical="center", wrap_text=True)
+        
+        # Формируем имя файла
+        start_fmt = self.date_from.date().toString("ddMMyyyy")
+        end_fmt = self.date_to.date().toString("ddMMyyyy")
+        default_filename = f"otchet_{start_fmt}_{end_fmt}.xlsx"
+        
+        # Диалог сохранения
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Сохранить отчет",
+            default_filename,
+            "Excel файлы (*.xlsx);;Все файлы (*.*)"
+        )
+        
+        if file_path:
+            try:
+                wb.save(file_path)
+                QMessageBox.success(self, "Успех", f"Отчет успешно сохранен:\n{file_path}")
+            except Exception as e:
+                QMessageBox.critical(self, "Ошибка", f"Не удалось сохранить файл:\n{str(e)}")
