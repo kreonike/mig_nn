@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
-    QDateEdit, QGroupBox, QFormLayout, QFileDialog, QMessageBox
+    QDateEdit, QGroupBox, QFormLayout, QFileDialog, QMessageBox, QCalendarWidget
 )
 from PyQt6.QtCore import QDate, Qt
 import database
@@ -31,12 +31,16 @@ class StatsDialog(QDialog):
         self.date_from.setCalendarPopup(True)
         self.date_from.setDate(QDate.currentDate().addDays(-30))  # По умолчанию за последние 30 дней
         self.date_from.setDisplayFormat("dd.MM.yyyy")
+        calendar_from = QCalendarWidget()
+        self.date_from.setCalendarWidget(calendar_from)
 
         label_to = QLabel("по:")
         self.date_to = QDateEdit()
         self.date_to.setCalendarPopup(True)
         self.date_to.setDate(QDate.currentDate())
         self.date_to.setDisplayFormat("dd.MM.yyyy")
+        calendar_to = QCalendarWidget()
+        self.date_to.setCalendarWidget(calendar_to)
 
         btn_calc = QPushButton("🔄 Рассчитать")
         btn_calc.clicked.connect(self.calculate_stats)
@@ -180,6 +184,6 @@ class StatsDialog(QDialog):
         if file_path:
             try:
                 wb.save(file_path)
-                QMessageBox.success(self, "Успех", f"Отчет успешно сохранен:\n{file_path}")
+                QMessageBox.information(self, "Успех", f"Отчет успешно сохранен:\n{file_path}")
             except Exception as e:
                 QMessageBox.critical(self, "Ошибка", f"Не удалось сохранить файл:\n{str(e)}")
