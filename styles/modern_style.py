@@ -290,11 +290,31 @@ QCalendarWidget {
     border: 1px solid #DCE4EC;
     border-radius: 3px;
 }
+QCalendarWidget QAbstractItemView:enabled {
+    background-color: white;
+    color: #2C3E50;
+    selection-background-color: #34495E;
+    selection-color: white;
+    font-size: 11px;
+}
+QCalendarWidget QAbstractItemView QWidget {
+    padding: 0px;
+}
+QCalendarWidget QTableView {
+    background-color: white;
+    border: none;
+    selection-background-color: #34495E;
+    selection-color: white;
+}
+QCalendarWidget QTableView::item {
+    padding: 0px;
+    border: none;
+}
 QCalendarWidget QToolButton {
     color: #2C3E50;
     background-color: #F8F9FA;
     border-radius: 3px;
-    padding: 6px;
+    padding: 4px;
     border: 1px solid transparent;
 }
 QCalendarWidget QToolButton:hover {
@@ -640,11 +660,31 @@ QCalendarWidget {
     border-radius: 3px;
     color: #E8E8E8;
 }
+QCalendarWidget QAbstractItemView:enabled {
+    background-color: #17202A;
+    color: #E8E8E8;
+    selection-background-color: #5D6D7E;
+    selection-color: white;
+    font-size: 11px;
+}
+QCalendarWidget QAbstractItemView QWidget {
+    padding: 0px;
+}
+QCalendarWidget QTableView {
+    background-color: #17202A;
+    border: none;
+    selection-background-color: #5D6D7E;
+    selection-color: white;
+}
+QCalendarWidget QTableView::item {
+    padding: 0px;
+    border: none;
+}
 QCalendarWidget QToolButton {
     color: #E8E8E8;
     background-color: #1B2631;
     border-radius: 3px;
-    padding: 6px;
+    padding: 4px;
     border: 1px solid transparent;
 }
 QCalendarWidget QToolButton:hover {
@@ -703,7 +743,7 @@ QSlider::handle:horizontal:hover {
 def apply_modern_theme(app=None, theme_name="✨ Modern Light"):
     """
     Применяет современный строгий стиль ко всем виджетам приложения
-    
+
     Args:
         app: экземпляр QApplication
         theme_name: название темы ("✨ Modern Light" или "🌙 Modern Dark")
@@ -712,15 +752,15 @@ def apply_modern_theme(app=None, theme_name="✨ Modern Light"):
         app = QApplication.instance()
         if app is None:
             app = QApplication([])
-    
+
     # Определяем тип темы по названию
     if 'Dark' in theme_name or 'dark' in theme_name:
         app.setStyleSheet(DARK_THEME)
     else:
         app.setStyleSheet(LIGHT_THEME)
-    
+
     # Устанавливаем шрифты по умолчанию
     font = QFont("Segoe UI", 13)
     app.setFont(font)
-    
+
     return app

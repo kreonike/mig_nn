@@ -1,21 +1,33 @@
-from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
-    QDateEdit, QGroupBox, QFormLayout, QFileDialog, QMessageBox, QCalendarWidget
-)
-from PyQt6.QtCore import QDate, Qt, QLocale
-from PyQt6.QtGui import QFont
-import database
-from openpyxl import Workbook
-from openpyxl.styles import Font, Alignment, Border, Side
 from datetime import datetime
 import os
 
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Border, Font, Side
+from PyQt6.QtCore import QDate, QLocale, Qt
+from PyQt6.QtGui import QFont
+from PyQt6.QtWidgets import (
+    QCalendarWidget,
+    QDateEdit,
+    QDialog,
+    QFileDialog,
+    QFormLayout,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QPushButton,
+    QVBoxLayout,
+)
+
+import database
+
 
 class StatsDialog(QDialog):
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("📊 Статистика и отчеты")
-        self.resize(500, 380)
+        self.resize(520, 400)
 
         self.init_ui()
         self.calculate_stats()
@@ -27,37 +39,90 @@ class StatsDialog(QDialog):
         period_group = QGroupBox("Выберите период")
         period_layout = QHBoxLayout(period_group)
 
+        # Полный изолированный CSS для календаря, блокирующий перехват стилей QTableView из темы
+        calendar_style = """
+            QCalendarWidget QWidget {
+                background-color: #ffffff !important;
+                color: #1a1a1a !important;
+            }
+            QCalendarWidget QTableView {
+                background-color: #ffffff !important;
+                color: #1a1a1a !important;
+                selection-background-color: #0067c0 !important;
+                selection-color: #ffffff !important;
+                gridline-color: #e5e5e5 !important;
+            }
+            QCalendarWidget QAbstractItemView:enabled {
+                color: #1a1a1a !important;
+                background-color: #ffffff !important;
+                selection-background-color: #0067c0 !important;
+                selection-color: #ffffff !important;
+            }
+            QCalendarWidget QAbstractItemView:disabled {
+                color: #a0a0a0 !important;
+            }
+            QCalendarWidget QWidget#qt_calendar_navigationbar {
+                background-color: #f3f3f3 !important;
+            }
+            QCalendarWidget QToolButton {
+                color: #1a1a1a !important;
+                background-color: #f3f3f3 !important;
+            }
+            QCalendarWidget QMenu {
+                background-color: #ffffff !important;
+                color: #1a1a1a !important;
+            }
+            QCalendarWidget QSpinBox {
+                background-color: #ffffff !important;
+                color: #1a1a1a !important;
+            }
+        """
+
+        date_edit_style = """
+            QDateEdit {
+                min-width: 120px;
+                padding: 5px 8px;
+                font-size: 13px;
+                font-weight: bold;
+                color: #1a1a1a;
+                background-color: #ffffff;
+                border: 1px solid #d1d1d1;
+                border-radius: 4px;
+            }
+            QDateEdit::drop-down {
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 22px;
+                border-left: 1px solid #d1d1d1;
+            }
+        """
+
         label_from = QLabel("С:")
         self.date_from = QDateEdit()
         self.date_from.setCalendarPopup(True)
-        self.date_from.setDate(QDate.currentDate().addDays(-30))  # По умолчанию за последние 30 дней
         self.date_from.setDisplayFormat("dd.MM.yyyy")
-        calendar_from = QCalendarWidget()
-        calendar_from.setGridVisible(True)
-        # Устанавливаем русскую локаль для отображения дней недели и месяцев на русском
-        calendar_from.setLocale(QLocale(QLocale.Language.Russian, QLocale.Country.Russia))
-        # Принудительно устанавливаем шрифт, поддерживающий кириллицу и все цифры
-        font = QFont("Segoe UI", 10)  # Или "DejaVu Sans", если Segoe UI нет
-        if not QFont(font.family()).exactMatch():
-            font = QFont("DejaVu Sans", 10)
-        calendar_from.setFont(font)
-        self.date_from.setCalendarWidget(calendar_from)
+        self.date_from.setDate(QDate.currentDate().addDays(-30))
+        self.date_from.setStyleSheet(date_edit_style)
+
+        # Создаем явный виджет календаря с жестким стилем
+        cal_from = QCalendarWidget(self)
+        cal_from.setGridVisible(True)
+        cal_from.setLocale(QLocale(QLocale.Language.Russian, QLocale.Country.Russia))
+        cal_from.setStyleSheet(calendar_style)
+        self.date_from.setCalendarWidget(cal_from)
 
         label_to = QLabel("по:")
         self.date_to = QDateEdit()
         self.date_to.setCalendarPopup(True)
-        self.date_to.setDate(QDate.currentDate())
         self.date_to.setDisplayFormat("dd.MM.yyyy")
-        calendar_to = QCalendarWidget()
-        calendar_to.setGridVisible(True)
-        # Устанавливаем русскую локаль для отображения дней недели и месяцев на русском
-        calendar_to.setLocale(QLocale(QLocale.Language.Russian, QLocale.Country.Russia))
-        # Принудительно устанавливаем шрифт, поддерживающий кириллицу и все цифры
-        font_to = QFont("Segoe UI", 10)
-        if not QFont(font_to.family()).exactMatch():
-            font_to = QFont("DejaVu Sans", 10)
-        calendar_to.setFont(font_to)
-        self.date_to.setCalendarWidget(calendar_to)
+        self.date_to.setDate(QDate.currentDate())
+        self.date_to.setStyleSheet(date_edit_style)
+
+        cal_to = QCalendarWidget(self)
+        cal_to.setGridVisible(True)
+        cal_to.setLocale(QLocale(QLocale.Language.Russian, QLocale.Country.Russia))
+        cal_to.setStyleSheet(calendar_style)
+        self.date_to.setCalendarWidget(cal_to)
 
         btn_calc = QPushButton("🔄 Рассчитать")
         btn_calc.clicked.connect(self.calculate_stats)
@@ -126,23 +191,29 @@ class StatsDialog(QDialog):
         self.lbl_total_sum.setText(f"{res['total_sum']:,.2f} руб.".replace(",", " "))
 
     def export_to_excel(self):
-        """Экспорт данных за период в Excel файл"""
         start_date = self.date_from.date().toString("yyyy-MM-dd")
         end_date = self.date_to.date().toString("yyyy-MM-dd")
-        
-        # Получаем данные из базы
-        data = database.get_spreadsheet_data_for_period(start_date, end_date)
-        
-        if not data:
-            QMessageBox.information(self, "Информация", "Нет данных за выбранный период.")
+
+        if not hasattr(database, "get_spreadsheet_data_for_period"):
+            QMessageBox.warning(
+                self,
+                "Внимание",
+                "Функция выгрузки отчета не найдена в модуле database.",
+            )
             return
-        
-        # Создаем книгу Excel
+
+        data = database.get_spreadsheet_data_for_period(start_date, end_date)
+
+        if not data:
+            QMessageBox.information(
+                self, "Информация", "Нет данных за выбранный период."
+            )
+            return
+
         wb = Workbook()
         ws = wb.active
         ws.title = "Справки"
-        
-        # Заголовки столбцов
+
         headers = [
             "Номер выданной справки",
             "Дата выдачи",
@@ -153,54 +224,57 @@ class StatsDialog(QDialog):
             "Дата рождения",
             "Адрес",
             "Заключение (годен/не годен)",
-            "Примечание"
+            "Примечание",
         ]
-        
-        # Стили для заголовков
+
         bold_font = Font(bold=True)
         center_alignment = Alignment(horizontal="center", vertical="center")
         thin_border = Border(
-            left=Side(style='thin'),
-            right=Side(style='thin'),
-            top=Side(style='thin'),
-            bottom=Side(style='thin')
+            left=Side(style="thin"),
+            right=Side(style="thin"),
+            top=Side(style="thin"),
+            bottom=Side(style="thin"),
         )
-        
-        # Добавляем заголовки
+
         for col_num, header in enumerate(headers, 1):
             cell = ws.cell(row=1, column=col_num, value=header)
             cell.font = bold_font
             cell.alignment = center_alignment
             cell.border = thin_border
-        
-        # Автоширина колонок
+
         column_widths = [15, 12, 15, 20, 15, 20, 12, 30, 15, 25]
         for i, width in enumerate(column_widths, 1):
-            ws.column_dimensions[chr(64 + i) if i <= 26 else f"{chr(64 + i//26)}{chr(64 + i%26)}"].width = width
-        
-        # Заполняем данными
+            col_letter = (
+                chr(64 + i)
+                if i <= 26
+                else f"{chr(64 + i // 26)}{chr(64 + i % 26)}"
+            )
+            ws.column_dimensions[col_letter].width = width
+
         for row_num, row_data in enumerate(data, 2):
             for col_num, value in enumerate(row_data, 1):
                 cell = ws.cell(row=row_num, column=col_num, value=value)
                 cell.border = thin_border
                 cell.alignment = Alignment(vertical="center", wrap_text=True)
-        
-        # Формируем имя файла
+
         start_fmt = self.date_from.date().toString("ddMMyyyy")
         end_fmt = self.date_to.date().toString("ddMMyyyy")
         default_filename = f"otchet_{start_fmt}_{end_fmt}.xlsx"
-        
-        # Диалог сохранения
+
         file_path, _ = QFileDialog.getSaveFileName(
             self,
             "Сохранить отчет",
             default_filename,
-            "Excel файлы (*.xlsx);;Все файлы (*.*)"
+            "Excel файлы (*.xlsx);;Все файлы (*.*)",
         )
-        
+
         if file_path:
             try:
                 wb.save(file_path)
-                QMessageBox.information(self, "Успех", f"Отчет успешно сохранен:\n{file_path}")
+                QMessageBox.information(
+                    self, "Успех", f"Отчет успешно сохранен:\n{file_path}"
+                )
             except Exception as e:
-                QMessageBox.critical(self, "Ошибка", f"Не удалось сохранить файл:\n{str(e)}")
+                QMessageBox.critical(
+                    self, "Ошибка", f"Не удалось сохранить файл:\n{str(e)}"
+                )
