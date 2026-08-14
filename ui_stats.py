@@ -2,7 +2,7 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QDateEdit, QGroupBox, QFormLayout, QFileDialog, QMessageBox, QCalendarWidget
 )
-from PyQt6.QtCore import QDate, Qt
+from PyQt6.QtCore import QDate, Qt, QLocale
 import database
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, Border, Side
@@ -32,6 +32,9 @@ class StatsDialog(QDialog):
         self.date_from.setDate(QDate.currentDate().addDays(-30))  # По умолчанию за последние 30 дней
         self.date_from.setDisplayFormat("dd.MM.yyyy")
         calendar_from = QCalendarWidget()
+        calendar_from.setGridVisible(True)
+        # Устанавливаем русский локаль для корректного отображения дней недели и месяцев
+        calendar_from.setLocale(QLocale(QLocale.Language.Russian, QLocale.Country.Russia))
         self.date_from.setCalendarWidget(calendar_from)
 
         label_to = QLabel("по:")
@@ -40,6 +43,9 @@ class StatsDialog(QDialog):
         self.date_to.setDate(QDate.currentDate())
         self.date_to.setDisplayFormat("dd.MM.yyyy")
         calendar_to = QCalendarWidget()
+        calendar_to.setGridVisible(True)
+        # Устанавливаем русский локаль для корректного отображения дней недели и месяцев
+        calendar_to.setLocale(QLocale(QLocale.Language.Russian, QLocale.Country.Russia))
         self.date_to.setCalendarWidget(calendar_to)
 
         btn_calc = QPushButton("🔄 Рассчитать")
