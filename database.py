@@ -1099,6 +1099,122 @@ def get_statistics_for_period(start_date: str, end_date: str) -> Dict[str, Any]:
         conn.close()
 
 
+def get_spreadsheet_data_for_period(start_date: str, end_date: str) -> List[List[str]]:
+    """
+    Получает данные для экспорта в Excel за указанный период.
+    Возвращает список строк с данными:
+    [Номер справки, Дата выдачи, Действительна до, Фамилия, Имя, Отчество, 
+     Дата рождения, Адрес, Заключение, Примечание]
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    def normalize_to_iso(d_str: str) -> str:
+        if not d_str:
+            return ""
+        s = d_str.strip()
+        if "." in s:
+            parts = s.split(".")
+            if len(parts) == 3:
+                return f"{parts[2]}-{parts[1].zfill(2)}-{parts[0].zfill(2)}"
+        return s
+    
+    start_iso = normalize_to_iso(start_date)
+    end_iso = normalize_to_iso(end_date)
+    
+    sql_date_conv = """
+        CASE 
+            WHEN "Дата" LIKE '__.__.____' THEN 
+                SUBSTR("Дата", 7, 4) || '-' || SUBSTR("Дата", 4, 2) || '-' || SUBSTR("Дата", 1, 2)
+            ELSE "Дата"
+        END
+    """
+    
+    try:
+        # Запрос для ГИБДД
+        query_gibdd = f"""
+            SELECT 
+                s."ВыданаСправка№" AS "НомерСправки",
+                s."Дата" AS "ДатаВыдачи",
+                s."Сроком" AS "ДействительнаДо",
+                c."Фамилия",
+                c."Имя",
+                c."Отчество",
+                c."ДатаРождения",
+                COALESCE(c."Улица", '') || ', д. ' || COALESCE(c."Дом", '') || 
+                    CASE WHEN c."Квартира" IS NOT NULL AND c."Квартира" != '' THEN ', кв. ' || c."Квартира" ELSE '' END AS "Адрес",
+                'Годен' AS "Заключение",
+                COALESCE(s."Примечание", '') AS "Примечание"
+            FROM "Сделки" s
+            JOIN "Клиенты" c ON s."КлиентID" = c."rowid"
+            WHERE {sql_date_conv} >= ? AND {sql_date_conv} <= ?
+        """
+        cursor.execute(query_gibdd, (start_iso, end_iso))
+        rows_gibdd = cursor.fetchall()
+        
+        # Запрос для Оружия
+        query_weapon = f"""
+            SELECT 
+                w."Справка№" AS "НомерСправки",
+                w."Дата" AS "ДатаВыдачи",
+                '' AS "ДействительнаДо",
+                c."Фамилия",
+                c."Имя",
+                c."Отчество",
+                c."ДатаРождения",
+                COALESCE(c."Улица", '') || ', д. ' || COALESCE(c."Дом", '') || 
+                    CASE WHEN c."Квартира" IS NOT NULL AND c."Квартира" != '' THEN ', кв. ' || c."Квартира" ELSE '' END AS "Адрес",
+                'Годен' AS "Заключение",
+                COALESCE(w."Примечание", '') AS "Примечание"
+            FROM "Справки_Оружие" w
+            JOIN "Клиенты" c ON w."КлиентID" = c."rowid"
+            WHERE {sql_date_conv} >= ? AND {sql_date_conv} <= ?
+        """
+        cursor.execute(query_weapon, (start_iso, end_iso))
+        rows_weapon = cursor.fetchall()
+        
+        # Объединяем результаты
+        all_rows = []
+        for row in rows_gibdd:
+            all_rows.append([
+                str(row["НомерСправки"] or ""),
+                row["ДатаВыдачи"] or "",
+                row["ДействительнаДо"] or "",
+                row["Фамилия"] or "",
+                row["Имя"] or "",
+                row["Отчество"] or "",
+                row["ДатаРождения"] or "",
+                row["Адрес"] or "",
+                row["Заключение"] or "",
+                row["Примечание"] or ""
+            ])
+        
+        for row in rows_weapon:
+            all_rows.append([
+                str(row["НомерСправки"] or ""),
+                row["ДатаВыдачи"] or "",
+                row["ДействительнаДо"] or "",
+                row["Фамилия"] or "",
+                row["Имя"] or "",
+                row["Отчество"] or "",
+                row["ДатаРождения"] or "",
+                row["Адрес"] or "",
+                row["Заключение"] or "",
+                row["Примечание"] or ""
+            ])
+        
+        # Сортируем по дате выдачи
+        all_rows.sort(key=lambda x: x[1], reverse=True)
+        
+        return all_rows
+        
+    except Exception as e:
+        logger.error(f"Ошибка получения данных для экспорта: {e}", exc_info=True)
+        return []
+    finally:
+        conn.close()
+
+
 def get_client_deals(client_id: int) -> List[Dict[str, Any]]:
     """
     Возвращает объединенную историю всех справок пациента

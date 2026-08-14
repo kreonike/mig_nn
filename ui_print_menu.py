@@ -28,7 +28,8 @@ class PrintMenuDialog(QDialog):
         self.doc_context = {**self.client_data, **self.deal_data}
 
         self.setWindowTitle("Печать документов")
-        self.setFixedSize(280, 320)
+        # Увеличиваем высоту окна с 320 до 360, чтобы кнопка "Закрыть" отображалась полностью
+        self.setFixedSize(280, 360)
 
         self.init_ui()
 
@@ -140,60 +141,6 @@ class PrintMenuDialog(QDialog):
             page_size=QPageSize.PageSizeId.A5,
             orientation=QPageLayout.Orientation.Portrait
     ):
-        """Пакетная печать документов с жестким разрывом страниц и безопасными отступами."""
-        from PyQt6.QtCore import QSizeF, QMarginsF
-        from PyQt6.QtGui import QPageLayout
-
-        printer = QPrinter(QPrinter.PrinterMode.HighResolution)
-        printer.setPageSize(QPageSize(page_size))
-        printer.setPageOrientation(orientation)
-
-        # Расширяем отступы для пакетной печати
-        safe_layout = QPageLayout(
-            QPageSize(page_size),
-            orientation,
-            QMarginsF(34.0, 7.0, 34.0, 7.0),  # Лево, Верх, Право, Низ в мм
-            QPageLayout.Unit.Millimeter
-        )
-        printer.setPageLayout(safe_layout)
-
-        dialog = QPrintDialog(printer, self)
-        dialog.setWindowTitle(f"Печать: {batch_title}")
-
-        if dialog.exec() == QPrintDialog.DialogCode.Accepted:
-            try:
-                document = QTextDocument()
-                cursor = QTextCursor(document)
-
-                for i, t_name in enumerate(template_names):
-                    if i > 0:
-                        block_fmt = QTextBlockFormat()
-                        # Гарантированный разрыв страницы перед каждым следующим шаблоном
-                        block_fmt.setPageBreakPolicy(QTextFormat.PageBreakFlag.PageBreak_AlwaysBefore)
-                        cursor.insertBlock(block_fmt)
-
-                    html = self._render_template_to_html(t_name)
-                    safe_html = self._clean_html_for_qt(html)
-                    cursor.insertHtml(safe_html)
-
-                rect = printer.pageLayout().paintRectPoints()
-                document.setPageSize(QSizeF(rect.width(), rect.height()))
-
-                document.print(printer)
-            except Exception as e:
-                QMessageBox.critical(
-                    self,
-                    "Ошибка печати",
-                    f"Не удалось напечатать '{batch_title}':\n{e}",
-                )
-
-    def _print_batch_templates(
-            self,
-            template_names: list,
-            batch_title: str,
-            page_size=QPageSize.PageSizeId.A5,
-            orientation=QPageLayout.Orientation.Portrait
-    ):
         """Пакетная печать документов с разрывом страниц и безопасными отступами."""
         from PyQt6.QtCore import QSizeF, QMarginsF
         from PyQt6.QtGui import QPageLayout
@@ -205,7 +152,7 @@ class PrintMenuDialog(QDialog):
         safe_layout = QPageLayout(
             QPageSize(page_size),
             orientation,
-            QMarginsF(30.0, 8.0, 30.0, 8.0),
+            QMarginsF(34.0, 7.0, 34.0, 7.0),  # Лево, Верх, Право, Низ в мм
             QPageLayout.Unit.Millimeter
         )
         printer.setPageLayout(safe_layout)
