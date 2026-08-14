@@ -5,7 +5,10 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('template', 'template')],
+    datas=[
+        ('template', 'template'),
+        ('icon.ico', '.')  # <-- Копирует icon.ico в корень папки приложения
+    ],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -32,7 +35,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['icon.ico']  # Иконка приложения
+    icon='icon.ico'  # <-- Передаем строку, а не список ['icon.ico']
 )
 coll = COLLECT(
     exe,
