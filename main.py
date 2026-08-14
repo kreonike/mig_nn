@@ -655,21 +655,30 @@ class MainWindow(QMainWindow):
         event.accept()
 
 
+def get_resource_path(relative_path: str) -> str:
+    """Возвращает корректный путь к файлам ресурсов в dev и после компиляции PyInstaller."""
+    if getattr(sys, 'frozen', False):
+        base_path = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
+    else:
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base_path, relative_path)
+
+
 def main():
     global _main_window
     logger.info("Инициализация QApplication...")
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(True)
     app.setStyle("Fusion")
-    
-    # Установка иконки приложения
-    icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon.ico")
+
+    # Корректное получение пути к иконке в любых режимах
+    icon_path = get_resource_path("icon.ico")
     if os.path.exists(icon_path):
         app.setWindowIcon(QIcon(icon_path))
         logger.info(f"Иконка приложения установлена: {icon_path}")
     else:
         logger.warning(f"Файл иконки не найден: {icon_path}")
-    
+
     apply_modern_theme(app, "✨ Modern Light")
 
     _main_window = MainWindow()
