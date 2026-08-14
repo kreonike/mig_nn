@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Optional
 
 from PyQt6.QtCore import QThread, Qt, pyqtSignal, QTimer
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QIcon
 from PyQt6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -661,6 +661,15 @@ def main():
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(True)
     app.setStyle("Fusion")
+    
+    # Установка иконки приложения
+    icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon.ico")
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
+        logger.info(f"Иконка приложения установлена: {icon_path}")
+    else:
+        logger.warning(f"Файл иконки не найден: {icon_path}")
+    
     apply_modern_theme(app, "✨ Modern Light")
 
     _main_window = MainWindow()
