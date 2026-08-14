@@ -36,7 +36,11 @@ class StatsDialog(QDialog):
         calendar_from.setGridVisible(True)
         # Устанавливаем русскую локаль для отображения дней недели и месяцев на русском
         calendar_from.setLocale(QLocale(QLocale.Language.Russian, QLocale.Country.Russia))
-        # Убираем явное задание шрифта, используем системный для корректного отображения всех символов
+        # Принудительно устанавливаем шрифт, поддерживающий кириллицу и все цифры
+        font = QFont("Segoe UI", 10)  # Или "DejaVu Sans", если Segoe UI нет
+        if not QFont(font.family()).exactMatch():
+            font = QFont("DejaVu Sans", 10)
+        calendar_from.setFont(font)
         self.date_from.setCalendarWidget(calendar_from)
 
         label_to = QLabel("по:")
@@ -48,7 +52,11 @@ class StatsDialog(QDialog):
         calendar_to.setGridVisible(True)
         # Устанавливаем русскую локаль для отображения дней недели и месяцев на русском
         calendar_to.setLocale(QLocale(QLocale.Language.Russian, QLocale.Country.Russia))
-        # Убираем явное задание шрифта, используем системный для корректного отображения всех символов
+        # Принудительно устанавливаем шрифт, поддерживающий кириллицу и все цифры
+        font_to = QFont("Segoe UI", 10)
+        if not QFont(font_to.family()).exactMatch():
+            font_to = QFont("DejaVu Sans", 10)
+        calendar_to.setFont(font_to)
         self.date_to.setCalendarWidget(calendar_to)
 
         btn_calc = QPushButton("🔄 Рассчитать")
