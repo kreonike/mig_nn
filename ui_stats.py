@@ -2,7 +2,8 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QDateEdit, QGroupBox, QFormLayout, QFileDialog, QMessageBox, QCalendarWidget
 )
-from PyQt6.QtCore import QDate, Qt, QLocale
+from PyQt6.QtCore import QDate, Qt
+from PyQt6.QtGui import QFont
 import database
 from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, Border, Side
@@ -33,8 +34,9 @@ class StatsDialog(QDialog):
         self.date_from.setDisplayFormat("dd.MM.yyyy")
         calendar_from = QCalendarWidget()
         calendar_from.setGridVisible(True)
-        # Устанавливаем русский локаль для корректного отображения дней недели и месяцев
-        calendar_from.setLocale(QLocale(QLocale.Language.Russian, QLocale.Country.Russia))
+        # Устанавливаем шрифт для корректного отображения цифр
+        calendar_font = QFont("Arial", 10)
+        calendar_from.setFont(calendar_font)
         self.date_from.setCalendarWidget(calendar_from)
 
         label_to = QLabel("по:")
@@ -44,8 +46,8 @@ class StatsDialog(QDialog):
         self.date_to.setDisplayFormat("dd.MM.yyyy")
         calendar_to = QCalendarWidget()
         calendar_to.setGridVisible(True)
-        # Устанавливаем русский локаль для корректного отображения дней недели и месяцев
-        calendar_to.setLocale(QLocale(QLocale.Language.Russian, QLocale.Country.Russia))
+        # Устанавливаем шрифт для корректного отображения цифр
+        calendar_to.setFont(calendar_font)
         self.date_to.setCalendarWidget(calendar_to)
 
         btn_calc = QPushButton("🔄 Рассчитать")
