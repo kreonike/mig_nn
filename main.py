@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import urllib.request
+import urllib.error
 import zipfile
 from datetime import datetime
 from typing import Optional
@@ -115,7 +116,7 @@ class DownloadThread(QThread):
         self.expected_hash = expected_hash
 
     def run(self):
-        # Используем стандартный SSL-контекст с проверкой сертификатов
+        # Сначала пробуем стандартный SSL-контекст с проверкой сертификатов
         ssl_context = ssl.create_default_context()
 
         class CustomRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -168,6 +169,52 @@ class DownloadThread(QThread):
                     return
 
             self.download_finished.emit(self.dest_path)
+        except (ssl.SSLCertVerificationError, ssl.SSLError, urllib.error.URLError) as e:
+            # Для macOS: если нет сертификатов CA, пробуем без проверки
+            logger.warning(f"SSL ошибка при загрузке: {e}, пробуем без проверки")
+            try:
+                insecure_context = ssl._create_unverified_context()
+                https_handler = urllib.request.HTTPSHandler(context=insecure_context)
+                opener = urllib.request.build_opener(CustomRedirectHandler(), https_handler)
+
+                req = urllib.request.Request(
+                    self.download_url,
+                    headers={
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                        'Accept': '*/*'
+                    }
+                )
+
+                with opener.open(req, timeout=30) as response:
+                    total_size = int(response.headers.get('content-length', 0))
+                    downloaded = 0
+                    chunk_size = 1024 * 64
+
+                    with open(self.dest_path, 'wb') as out_file:
+                        while True:
+                            chunk = response.read(chunk_size)
+                            if not chunk:
+                                break
+                            out_file.write(chunk)
+                            downloaded += len(chunk)
+                            self.progress_changed.emit(downloaded, total_size)
+
+                # Проверяем хеш файла, если он указан
+                if self.expected_hash:
+                    import hashlib
+                    sha256 = hashlib.sha256()
+                    with open(self.dest_path, 'rb') as f:
+                        for block in iter(lambda: f.read(65536), b''):
+                            sha256.update(block)
+                    actual_hash = sha256.hexdigest()
+                    if actual_hash != self.expected_hash:
+                        os.remove(self.dest_path)
+                        self.download_failed.emit(f"Хеш файла не совпадает! Ожидался: {self.expected_hash}, получен: {actual_hash}")
+                        return
+
+                self.download_finished.emit(self.dest_path)
+            except Exception as e2:
+                self.download_failed.emit(str(e2))
         except Exception as e:
             self.download_failed.emit(str(e))
 
@@ -323,7 +370,7 @@ class AboutDialog(QDialog):
                 else:
                     logger.error(f"Сервер вернул статус ответа: {response.status}")
                     raise Exception(f"Код ответа сервера: {response.status}")
-        except (ssl.SSLCertVerificationError, ssl.SSLError) as e:
+        except urllib.error.URLError as e:
             # Для macOS: если нет сертификатов CA, пробуем без проверки (менее безопасно, но работает)
             logger.warning(f"SSL ошибка сертификата: {e}, пробуем без проверки")
             try:
@@ -365,9 +412,9 @@ class AboutDialog(QDialog):
                     else:
                         logger.error(f"Сервер вернул статус ответа: {response.status}")
                         raise Exception(f"Код ответа сервера: {response.status}")
-            except Exception as e:
-                logger.error(f"Ошибка при проверке обновлений (без SSL): {e}", exc_info=True)
-                QMessageBox.warning(self, "Ошибка связи", f"Не удалось проверить обновления.\nПроверьте подключение к интернету.\n({e})")
+            except Exception as e2:
+                logger.error(f"Ошибка при проверке обновлений (без SSL): {e2}", exc_info=True)
+                QMessageBox.warning(self, "Ошибка связи", f"Не удалось проверить обновления.\nПроверьте подключение к интернету.\n({e2})")
         except Exception as e:
             logger.error(f"Ошибка при проверке обновлений: {e}", exc_info=True)
             QMessageBox.warning(self, "Ошибка связи", f"Не удалось проверить обновления.\nПроверьте подключение к интернету.\n({e})")
