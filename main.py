@@ -281,9 +281,10 @@ class AboutDialog(QDialog):
         logger.info("Запуск процедуры проверки обновлений...")
 
         raw_version_url = "https://raw.githubusercontent.com/kreonike/mig_nn/main/version.json"
-        # Используем стандартный SSL-контекст с проверкой сертификатов
+        
+        # Сначала пробуем стандартный SSL-контекст с проверкой сертификатов
         ssl_context = ssl.create_default_context()
-
+        
         try:
             req = urllib.request.Request(
                 raw_version_url,
@@ -322,6 +323,51 @@ class AboutDialog(QDialog):
                 else:
                     logger.error(f"Сервер вернул статус ответа: {response.status}")
                     raise Exception(f"Код ответа сервера: {response.status}")
+        except ssl.SSLCertVerificationError:
+            # Для macOS: если нет сертификатов CA, пробуем без проверки (менее безопасно, но работает)
+            logger.warning("SSL сертификат не найден, пробуем без проверки (macOS)")
+            try:
+                insecure_context = ssl._create_unverified_context()
+                req = urllib.request.Request(
+                    raw_version_url,
+                    headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+                )
+                with urllib.request.urlopen(req, context=insecure_context, timeout=5) as response:
+                    if response.status == 200:
+                        data = json.loads(response.read().decode('utf-8'))
+                        latest_version = data.get('version', '').strip()
+                        download_url = data.get('download_url', '').strip()
+                        changelog = data.get('changelog', '')
+                        file_hash = data.get('sha256', '')
+
+                        logger.info(f"Получен ответ с сервера. Актуальная версия на GitHub: {latest_version}")
+
+                        if latest_version and self.parse_version(latest_version) > self.parse_version(APP_VERSION):
+                            logger.info(f"Найдена новая версия ({latest_version} > {APP_VERSION}).")
+                            msg = f"Найдена новая версия: <b>{latest_version}</b>!\nТекущая версия: {APP_VERSION}\n\n"
+                            if changelog:
+                                msg += f"<b>Что нового:</b>\n{changelog}\n\n"
+                            msg += "Хотите обновиться сейчас?"
+
+                            reply = QMessageBox.question(
+                                self, "Доступно обновление", msg,
+                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                            )
+
+                            if reply == QMessageBox.StandardButton.Yes:
+                                self.run_auto_update(download_url, file_hash)
+                        else:
+                            logger.info("Установлена самая свежая версия программы.")
+                            QMessageBox.information(
+                                self, "Проверка обновлений",
+                                f"У вас установлена самая свежая версия программы ({APP_VERSION})."
+                            )
+                    else:
+                        logger.error(f"Сервер вернул статус ответа: {response.status}")
+                        raise Exception(f"Код ответа сервера: {response.status}")
+            except Exception as e:
+                logger.error(f"Ошибка при проверке обновлений (без SSL): {e}", exc_info=True)
+                QMessageBox.warning(self, "Ошибка связи", f"Не удалось проверить обновления.\nПроверьте подключение к интернету.\n({e})")
         except Exception as e:
             logger.error(f"Ошибка при проверке обновлений: {e}", exc_info=True)
             QMessageBox.warning(self, "Ошибка связи", f"Не удалось проверить обновления.\nПроверьте подключение к интернету.\n({e})")

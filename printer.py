@@ -36,6 +36,14 @@ def generate_pdf_from_html(template_name: str, client_data: dict, deal_data: dic
 
     printer = QPrinter(QPrinter.PrinterMode.HighResolution)
     printer.setOutputFormat(QPrinter.OutputFormat.PdfFormat)
+    
+    # Устанавливаем формат бумаги А5
+    from PyQt6.QtGui import QPageSize
+    printer.setPageSize(QPageSize.PageSizeId.A5)
+    
+    # Устанавливаем минимальные поля (в миллиметрах)
+    from PyQt6.QtCore import QMarginsF
+    printer.setPageMargins(QMarginsF(5, 5, 5, 5))  # левое, верхнее, правое, нижнее
 
     output_path = os.path.join(get_base_path(), output_pdf_name)
     printer.setOutputFileName(output_path)
