@@ -41,7 +41,7 @@ from ui_gibdd_form import GibddFormDialog
 from ui_references import ReferencesDialog
 from ui_stats import StatsDialog
 
-APP_VERSION = "1.2.5"
+APP_VERSION = "1.2.6"
 _main_window = None
 
 
