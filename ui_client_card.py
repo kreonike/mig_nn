@@ -25,7 +25,7 @@ class ClientCardDialog(QDialog):
         super().__init__(parent)
         self.client_id = client_id
         self.setWindowTitle(f"Карточка пациента №{client_id}")
-        self.resize(900, 640)
+        self.resize(1100, 640)
 
         self.init_ui()
         self.load_data()
