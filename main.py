@@ -323,9 +323,9 @@ class AboutDialog(QDialog):
                 else:
                     logger.error(f"Сервер вернул статус ответа: {response.status}")
                     raise Exception(f"Код ответа сервера: {response.status}")
-        except ssl.SSLCertVerificationError:
+        except (ssl.SSLCertVerificationError, ssl.SSLError) as e:
             # Для macOS: если нет сертификатов CA, пробуем без проверки (менее безопасно, но работает)
-            logger.warning("SSL сертификат не найден, пробуем без проверки (macOS)")
+            logger.warning(f"SSL ошибка сертификата: {e}, пробуем без проверки")
             try:
                 insecure_context = ssl._create_unverified_context()
                 req = urllib.request.Request(
