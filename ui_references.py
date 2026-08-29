@@ -75,7 +75,7 @@ class ReferencesDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Справочники системы")
-        self.resize(850, 550)
+        self.resize(1100, 550)
 
         self.init_ui()
         self.load_data()

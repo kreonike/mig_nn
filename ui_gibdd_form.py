@@ -29,7 +29,7 @@ class GibddFormDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("🚗 Оформление справки ГИБДД")
-        self.resize(1000, 650)
+        self.resize(1200, 650)
         self.current_client_id = None
         self.found_clients_map = {}
         self._block_search_signal = False
