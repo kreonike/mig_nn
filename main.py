@@ -41,7 +41,7 @@ from ui_gibdd_form import GibddFormDialog
 from ui_references import ReferencesDialog
 from ui_stats import StatsDialog
 
-APP_VERSION = "1.2.7"
+APP_VERSION = "1.2.8"
 _main_window = None
 
 
@@ -299,7 +299,7 @@ class AboutDialog(QDialog):
         subtitle = QLabel("Модуль оформления медосвидетельствований (МИГ-НН)")
 
         ver_label = QLabel(f"<b>Версия программы:</b> {APP_VERSION}")
-        dev_label = QLabel("<b>Разработчик:</b> Нижний Новгород")
+        dev_label = QLabel("<b>Разработчик:</b> @rapot")
 
         btn_check_update = QPushButton("🔄 Проверить обновления")
         btn_check_update.clicked.connect(self.check_updates)
