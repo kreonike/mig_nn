@@ -25,7 +25,7 @@ class ClientCardDialog(QDialog):
         super().__init__(parent)
         self.client_id = client_id
         self.setWindowTitle(f"Карточка пациента №{client_id}")
-        self.resize(900, 640)
+        self.resize(1100, 640)
 
         self.init_ui()
         self.load_data()
@@ -264,7 +264,6 @@ class ClientCardDialog(QDialog):
             "Имя": self.field_name.text().strip(),
             "Отчество": self.field_otch.text().strip(),
             "Пол": self.field_pol.currentText(),
-            # Конвертируем обратно в ISO для корректной записи в БД
             "ДатаРождения": self.format_date_to_iso(self.field_birth.text()),
             "СерПасп": self.field_ser_p.text().strip(),
             "ПспНом": self.field_nom_p.text().strip(),
@@ -277,6 +276,22 @@ class ClientCardDialog(QDialog):
             "Дом": self.field_dom.text().strip(),
             "Квартира": self.field_kv.text().strip(),
         }
+
+        # Проверяем дубликаты перед сохранением
+        duplicate = database.check_duplicate_client(client_data, exclude_id=self.client_id)
+        if duplicate:
+            reply = QMessageBox.question(
+                self,
+                "Возможен дубликат",
+                f"Найден похожий пациент:\n"
+                f"{duplicate['Фамилия']} {duplicate['Имя']} {duplicate.get('Отчество', '')}\n"
+                f"Дата рождения: {duplicate.get('ДатаРождения', '')}\n\n"
+                f"Продолжить сохранение?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            if reply == QMessageBox.StandardButton.No:
+                return
 
         if database.update_client(client_data):
             QMessageBox.information(

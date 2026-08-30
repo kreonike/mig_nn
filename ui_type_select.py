@@ -7,7 +7,7 @@ class TypeSelectDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Тип Справки")
-        self.setFixedSize(200, 220)
+        self.setFixedSize(280, 220)
         self.selected_type = None
 
         layout = QVBoxLayout(self)

@@ -28,7 +28,7 @@ class WeaponFormDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("🔫 Оформление справки на Оружие (Форма 002-О/у)")
-        self.resize(1000, 620)
+        self.resize(1200, 620)
         self.current_client_id = None
         self.found_clients_map = {}
         self._block_search_signal = False

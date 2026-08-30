@@ -7,11 +7,13 @@ import subprocess
 import sys
 import tempfile
 import urllib.request
+import urllib.error
 import zipfile
 from datetime import datetime
+from typing import Optional
 
-from PyQt6.QtCore import QThread, Qt, pyqtSignal
-from PyQt6.QtGui import QFont
+from PyQt6.QtCore import QThread, Qt, pyqtSignal, QTimer
+from PyQt6.QtGui import QFont, QIcon
 from PyQt6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -32,12 +34,14 @@ from PyQt6.QtWidgets import (
 )
 
 import database
+from backup import BackupThread
+from styles.modern_style import apply_modern_theme, LIGHT_THEME, DARK_THEME
 from ui_client_card import ClientCardDialog
 from ui_gibdd_form import GibddFormDialog
 from ui_references import ReferencesDialog
 from ui_stats import StatsDialog
 
-APP_VERSION = "1.2.3"
+APP_VERSION = "1.2.7"
 _main_window = None
 
 
@@ -97,188 +101,6 @@ sys.excepthook = log_uncaught_exceptions
 
 
 # ==============================================================================
-# 🎨 СТИЛИ ОФОРМЛЕНИЯ
-# ==============================================================================
-
-FLUENT_LIGHT_STYLE = """
-QWidget {
-    background-color: #f3f3f3;
-    color: #1a1a1a;
-    font-family: '.AppleSystemUIFont', BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-}
-QMainWindow, QDialog, QTabWidget, QTabBar, QScrollArea {
-    background-color: #f3f3f3;
-    color: #1a1a1a;
-}
-QLabel {
-    background-color: transparent;
-    color: #1a1a1a;
-}
-QGroupBox {
-    font-weight: bold;
-    border: 1px solid #e5e5e5;
-    border-radius: 8px;
-    margin-top: 12px;
-    padding-top: 16px;
-    background-color: #ffffff;
-    color: #0067c0;
-}
-QGroupBox::title {
-    subcontrol-origin: margin;
-    left: 12px;
-    padding: 0 4px;
-    background-color: #ffffff;
-    color: #0067c0;
-}
-QLineEdit, QComboBox, QDateEdit, QTextEdit {
-    border: 1px solid #d1d1d1;
-    border-bottom: 2px solid #0067c0;
-    border-radius: 4px;
-    padding: 6px 10px;
-    background-color: #ffffff;
-    color: #1a1a1a;
-    selection-background-color: #0067c0;
-    selection-color: #ffffff;
-}
-QPushButton {
-    background-color: #ffffff;
-    border: 1px solid #d1d1d1;
-    border-radius: 5px;
-    padding: 7px 15px;
-    font-weight: bold;
-    color: #1a1a1a;
-}
-QPushButton:hover {
-    background-color: #e5f3ff;
-    border-color: #0067c0;
-    color: #0067c0;
-}
-QPushButton#primaryButton {
-    background-color: #0067c0;
-    color: #ffffff;
-    border: none;
-}
-QPushButton#primaryButton:hover {
-    background-color: #1875d1;
-}
-QTableWidget, QTableView {
-    background-color: #ffffff;
-    color: #1a1a1a;
-    border: 1px solid #e5e5e5;
-    border-radius: 8px;
-    gridline-color: #f3f3f3;
-}
-QTableWidget::item {
-    background-color: #ffffff;
-    color: #1a1a1a;
-}
-QHeaderView::section {
-    background-color: #f9f9f9;
-    color: #333333;
-    padding: 8px;
-    font-weight: bold;
-    border: none;
-    border-bottom: 2px solid #e5e5e5;
-}
-QTableWidget::item:selected {
-    background-color: #0067c0;
-    color: #ffffff;
-}
-QStatusBar {
-    background-color: #f3f3f3;
-    color: #333333;
-}
-"""
-
-DARK_EMERALD_STYLE = """
-QWidget {
-    background-color: #12181f;
-    color: #e0e6ed;
-    font-family: '.AppleSystemUIFont', BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-}
-QMainWindow, QDialog, QTabWidget, QTabBar, QScrollArea {
-    background-color: #12181f;
-    color: #e0e6ed;
-}
-QLabel {
-    background-color: transparent;
-    color: #e0e6ed;
-}
-QGroupBox {
-    font-weight: bold;
-    border: 1px solid #232d38;
-    border-radius: 8px;
-    margin-top: 12px;
-    padding-top: 15px;
-    background-color: #1a222d;
-    color: #00b894;
-}
-QGroupBox::title {
-    subcontrol-origin: margin;
-    left: 12px;
-    padding: 0 6px;
-    background-color: #1a222d;
-    color: #00b894;
-}
-QLineEdit, QComboBox, QDateEdit, QTextEdit {
-    border: 1px solid #2c3846;
-    border-radius: 6px;
-    padding: 6px 10px;
-    background-color: #0f141a;
-    color: #f1f5f9;
-    selection-background-color: #00b894;
-    selection-color: #12181f;
-}
-QPushButton {
-    background-color: #232d38;
-    border: 1px solid #324050;
-    border-radius: 6px;
-    padding: 7px 15px;
-    font-weight: bold;
-    color: #e0e6ed;
-}
-QPushButton:hover {
-    background-color: #2c3846;
-    border-color: #00b894;
-    color: #00b894;
-}
-QPushButton#primaryButton {
-    background-color: #00b894;
-    color: #0a1015;
-    border: none;
-}
-QPushButton#primaryButton:hover {
-    background-color: #00dcaf;
-}
-QTableWidget, QTableView {
-    background-color: #1a222d;
-    color: #e0e6ed;
-    border: 1px solid #232d38;
-    gridline-color: #232d38;
-}
-QTableWidget::item {
-    background-color: #1a222d;
-    color: #e0e6ed;
-}
-QHeaderView::section {
-    background-color: #12181f;
-    color: #8da4be;
-    padding: 8px;
-    font-weight: bold;
-    border-bottom: 2px solid #2c3846;
-}
-QTableWidget::item:selected {
-    background-color: #00b894;
-    color: #12181f;
-}
-QStatusBar {
-    background-color: #12181f;
-    color: #8da4be;
-}
-"""
-
-
-# ==============================================================================
 # 🔄 ПОТОК И ДИАЛОГ НАГЛЯДНОГО СКАЧИВАНИЯ ОБНОВЛЕНИЙ
 # ==============================================================================
 
@@ -287,13 +109,15 @@ class DownloadThread(QThread):
     download_finished = pyqtSignal(str)     # path to downloaded file
     download_failed = pyqtSignal(str)       # error message
 
-    def __init__(self, download_url, dest_path):
+    def __init__(self, download_url, dest_path, expected_hash: Optional[str] = None):
         super().__init__()
         self.download_url = download_url
         self.dest_path = dest_path
+        self.expected_hash = expected_hash
 
     def run(self):
-        ssl_context = ssl._create_unverified_context()
+        # Сначала пробуем стандартный SSL-контекст с проверкой сертификатов
+        ssl_context = ssl.create_default_context()
 
         class CustomRedirectHandler(urllib.request.HTTPRedirectHandler):
             def redirect_request(self, req, fp, code, msg, headers, newurl):
@@ -331,7 +155,66 @@ class DownloadThread(QThread):
                         downloaded += len(chunk)
                         self.progress_changed.emit(downloaded, total_size)
 
+            # Проверяем хеш файла, если он указан
+            if self.expected_hash:
+                import hashlib
+                sha256 = hashlib.sha256()
+                with open(self.dest_path, 'rb') as f:
+                    for block in iter(lambda: f.read(65536), b''):
+                        sha256.update(block)
+                actual_hash = sha256.hexdigest()
+                if actual_hash != self.expected_hash:
+                    os.remove(self.dest_path)
+                    self.download_failed.emit(f"Хеш файла не совпадает! Ожидался: {self.expected_hash}, получен: {actual_hash}")
+                    return
+
             self.download_finished.emit(self.dest_path)
+        except (ssl.SSLCertVerificationError, ssl.SSLError, urllib.error.URLError) as e:
+            # Для macOS: если нет сертификатов CA, пробуем без проверки
+            logger.warning(f"SSL ошибка при загрузке: {e}, пробуем без проверки")
+            try:
+                insecure_context = ssl._create_unverified_context()
+                https_handler = urllib.request.HTTPSHandler(context=insecure_context)
+                opener = urllib.request.build_opener(CustomRedirectHandler(), https_handler)
+
+                req = urllib.request.Request(
+                    self.download_url,
+                    headers={
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                        'Accept': '*/*'
+                    }
+                )
+
+                with opener.open(req, timeout=30) as response:
+                    total_size = int(response.headers.get('content-length', 0))
+                    downloaded = 0
+                    chunk_size = 1024 * 64
+
+                    with open(self.dest_path, 'wb') as out_file:
+                        while True:
+                            chunk = response.read(chunk_size)
+                            if not chunk:
+                                break
+                            out_file.write(chunk)
+                            downloaded += len(chunk)
+                            self.progress_changed.emit(downloaded, total_size)
+
+                # Проверяем хеш файла, если он указан
+                if self.expected_hash:
+                    import hashlib
+                    sha256 = hashlib.sha256()
+                    with open(self.dest_path, 'rb') as f:
+                        for block in iter(lambda: f.read(65536), b''):
+                            sha256.update(block)
+                    actual_hash = sha256.hexdigest()
+                    if actual_hash != self.expected_hash:
+                        os.remove(self.dest_path)
+                        self.download_failed.emit(f"Хеш файла не совпадает! Ожидался: {self.expected_hash}, получен: {actual_hash}")
+                        return
+
+                self.download_finished.emit(self.dest_path)
+            except Exception as e2:
+                self.download_failed.emit(str(e2))
         except Exception as e:
             self.download_failed.emit(str(e))
 
@@ -347,6 +230,7 @@ class UpdateProgressDialog(QDialog):
 
         self.download_url = download_url
         self.downloaded_file = None
+        self.expected_hash = None
 
         layout = QVBoxLayout(self)
 
@@ -371,7 +255,7 @@ class UpdateProgressDialog(QDialog):
         temp_dir = tempfile.gettempdir()
         self.dest_path = os.path.join(temp_dir, f"mig_update_package{ext}")
 
-        self.thread = DownloadThread(download_url, self.dest_path)
+        self.thread = DownloadThread(download_url, self.dest_path, self.expected_hash)
         self.thread.progress_changed.connect(self.on_progress)
         self.thread.download_finished.connect(self.on_finished)
         self.thread.download_failed.connect(self.on_failed)
@@ -444,8 +328,10 @@ class AboutDialog(QDialog):
         logger.info("Запуск процедуры проверки обновлений...")
 
         raw_version_url = "https://raw.githubusercontent.com/kreonike/mig_nn/main/version.json"
-        ssl_context = ssl._create_unverified_context()
-
+        
+        # Сначала пробуем стандартный SSL-контекст с проверкой сертификатов
+        ssl_context = ssl.create_default_context()
+        
         try:
             req = urllib.request.Request(
                 raw_version_url,
@@ -457,6 +343,7 @@ class AboutDialog(QDialog):
                     latest_version = data.get('version', '').strip()
                     download_url = data.get('download_url', '').strip()
                     changelog = data.get('changelog', '')
+                    file_hash = data.get('sha256', '')  # SHA-256 хеш файла
 
                     logger.info(f"Получен ответ с сервера. Актуальная версия на GitHub: {latest_version}")
 
@@ -473,7 +360,7 @@ class AboutDialog(QDialog):
                         )
 
                         if reply == QMessageBox.StandardButton.Yes:
-                            self.run_auto_update(download_url)
+                            self.run_auto_update(download_url, file_hash)
                     else:
                         logger.info("Установлена самая свежая версия программы.")
                         QMessageBox.information(
@@ -483,11 +370,56 @@ class AboutDialog(QDialog):
                 else:
                     logger.error(f"Сервер вернул статус ответа: {response.status}")
                     raise Exception(f"Код ответа сервера: {response.status}")
+        except urllib.error.URLError as e:
+            # Для macOS: если нет сертификатов CA, пробуем без проверки (менее безопасно, но работает)
+            logger.warning(f"SSL ошибка сертификата: {e}, пробуем без проверки")
+            try:
+                insecure_context = ssl._create_unverified_context()
+                req = urllib.request.Request(
+                    raw_version_url,
+                    headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+                )
+                with urllib.request.urlopen(req, context=insecure_context, timeout=5) as response:
+                    if response.status == 200:
+                        data = json.loads(response.read().decode('utf-8'))
+                        latest_version = data.get('version', '').strip()
+                        download_url = data.get('download_url', '').strip()
+                        changelog = data.get('changelog', '')
+                        file_hash = data.get('sha256', '')
+
+                        logger.info(f"Получен ответ с сервера. Актуальная версия на GitHub: {latest_version}")
+
+                        if latest_version and self.parse_version(latest_version) > self.parse_version(APP_VERSION):
+                            logger.info(f"Найдена новая версия ({latest_version} > {APP_VERSION}).")
+                            msg = f"Найдена новая версия: <b>{latest_version}</b>!\nТекущая версия: {APP_VERSION}\n\n"
+                            if changelog:
+                                msg += f"<b>Что нового:</b>\n{changelog}\n\n"
+                            msg += "Хотите обновиться сейчас?"
+
+                            reply = QMessageBox.question(
+                                self, "Доступно обновление", msg,
+                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                            )
+
+                            if reply == QMessageBox.StandardButton.Yes:
+                                self.run_auto_update(download_url, file_hash)
+                        else:
+                            logger.info("Установлена самая свежая версия программы.")
+                            QMessageBox.information(
+                                self, "Проверка обновлений",
+                                f"У вас установлена самая свежая версия программы ({APP_VERSION})."
+                            )
+                    else:
+                        logger.error(f"Сервер вернул статус ответа: {response.status}")
+                        raise Exception(f"Код ответа сервера: {response.status}")
+            except Exception as e2:
+                logger.error(f"Ошибка при проверке обновлений (без SSL): {e2}", exc_info=True)
+                QMessageBox.warning(self, "Ошибка связи", f"Не удалось проверить обновления.\nПроверьте подключение к интернету.\n({e2})")
         except Exception as e:
             logger.error(f"Ошибка при проверке обновлений: {e}", exc_info=True)
             QMessageBox.warning(self, "Ошибка связи", f"Не удалось проверить обновления.\nПроверьте подключение к интернету.\n({e})")
 
-    def run_auto_update(self, download_url: str):
+    def run_auto_update(self, download_url: str, expected_hash: str = ""):
         """Скачивает и распаковывает обновление, перезапуская через bat-скрипт."""
         if not getattr(sys, 'frozen', False):
             logger.warning("Попытка запуска автообновления из исходного кода Python.")
@@ -503,8 +435,12 @@ class AboutDialog(QDialog):
             return
 
         progress_dlg = UpdateProgressDialog(download_url, self)
+        progress_dlg.expected_hash = expected_hash  # Передаем хеш в диалог
         if progress_dlg.exec() != QDialog.DialogCode.Accepted or not progress_dlg.downloaded_file:
             return
+
+        # Обновляем поток с хешем
+        progress_dlg.thread.expected_hash = expected_hash
 
         downloaded_package = progress_dlg.downloaded_file
         current_exe = sys.executable
@@ -569,27 +505,37 @@ class MainWindow(QMainWindow):
         super().__init__()
         logger.info("Инициализация главного окна...")
         self.setWindowTitle("Медицинская информационная система — Справки ГИБДД")
-        self.resize(1180, 720)
+        self.resize(1280, 760)
 
         self.current_clients = []
-        self.init_ui()
+        self.search_timer = QTimer()
+        self.search_timer.setSingleShot(True)
+        self.search_timer.timeout.connect(self._perform_search)
+        self.search_query_cache = ""
+
+        # Запускаем бэкап в фоновом потоке
         self.run_auto_backup()
 
+        self.init_ui()
+
     def run_auto_backup(self):
-        """Выполняет автоматическое резервное копирование базы данных."""
-        logger.info("Старт процедуры автоматического бэкапа базы данных...")
+        """Выполняет автоматическое резервное копирование базы данных в фоновом потоке."""
+        logger.info("Запуск процедуры автоматического бэкапа базы данных в фоне...")
         try:
-            if hasattr(database, "make_daily_backup"):
-                db_filename = getattr(database, "DB_NAME", "mig_database.db")
-                database.make_daily_backup(db_filename, backup_dir="backups")
-                logger.info("Процедура бэкапа успешно отработала.")
-            elif hasattr(database, "create_backup"):
-                database.create_backup()
-                logger.info("Процедура бэкапа успешно отработала через create_backup.")
-            else:
-                logger.warning("Метод бэкапа в модуле database не обнаружен.")
+            db_filename = getattr(database, "DB_NAME", "mig_database.db")
+            self.backup_thread = BackupThread(db_filename, backup_dir="backups")
+            self.backup_thread.backup_complete.connect(self.on_backup_complete)
+            self.backup_thread.start()
+            logger.info("Поток бэкапа запущен")
         except Exception as e:
-            logger.error(f"Ошибка при создании автоматического бэкапа БД: {e}", exc_info=True)
+            logger.error(f"Ошибка при запуске бэкапа: {e}", exc_info=True)
+
+    def on_backup_complete(self, success: bool, message: str):
+        """Обработчик завершения бэкапа."""
+        if success:
+            logger.info(message)
+        else:
+            logger.error(message)
 
     def init_ui(self):
         central_widget = QWidget()
@@ -617,7 +563,7 @@ class MainWindow(QMainWindow):
 
         self.combo_theme = QComboBox()
         self.combo_theme.setMinimumWidth(160)
-        self.combo_theme.addItems(["☀️ Светлая тема", "🌙 Тёмная тема"])
+        self.combo_theme.addItems(["✨ Modern Light", "🌙 Modern Dark"])
         self.combo_theme.currentTextChanged.connect(self.change_theme)
 
         top_bar.addWidget(btn_gibdd)
@@ -648,6 +594,7 @@ class MainWindow(QMainWindow):
         )
         self.field_search.setClearButtonEnabled(True)  # Кнопка ✖ для очистки
         self.field_search.textChanged.connect(self.on_search_text_changed)
+        self.field_search.setFocus()  # Автофокус на поле поиска
 
         search_layout.addWidget(search_label)
         search_layout.addWidget(self.field_search)
@@ -680,6 +627,10 @@ class MainWindow(QMainWindow):
         self.table_clients.setEditTriggers(
             QTableWidget.EditTrigger.NoEditTriggers
         )
+        self.table_clients.setSelectionMode(
+            QTableWidget.SelectionMode.SingleSelection
+        )
+        self.table_clients.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.table_clients.cellDoubleClicked.connect(
             self.on_client_double_clicked
         )
@@ -690,22 +641,28 @@ class MainWindow(QMainWindow):
 
     def change_theme(self, theme_name: str):
         logger.info(f"Переключение темы оформления на: {theme_name}")
-        app = QApplication.instance()
-        app.setStyleSheet("")
-
-        if "Светлая" in theme_name:
-            app.setStyleSheet(FLUENT_LIGHT_STYLE)
-        elif "Тёмная" in theme_name:
-            app.setStyleSheet(DARK_EMERALD_STYLE)
+        apply_modern_theme(QApplication.instance(), theme_name)
 
     def on_search_text_changed(self, text: str):
+        """Обрабатывает изменение текста в поле поиска с debounce (задержкой 300 мс)."""
         query = text.strip()
-        if not query:
+
+        # Не ищем при пустом запросе или меньше 2 символов
+        if len(query) < 2:
             self.display_clients([])
-            self.statusBar().showMessage("Введите данные для поиска")
+            self.statusBar().showMessage("Введите минимум 2 символа для поиска")
+            self.search_timer.stop()
             return
 
-        logger.info(f"Живой поиск пациентов по запросу: '{query}'")
+        # Кэшируем запрос и перезапускаем таймер
+        self.search_query_cache = query
+        self.search_timer.start(300)  # Debounce 300 мс
+
+    def _perform_search(self):
+        """Выполняет поиск по кэшированному запросу."""
+        query = self.search_query_cache
+        logger.info(f"Поиск пациентов по запросу: '{query}'")
+
         try:
             results = database.search_clients_for_completer(query, limit=200)
             self.display_clients(results)
@@ -733,11 +690,19 @@ class MainWindow(QMainWindow):
                 " ,."
             )
 
-            self.table_clients.setItem(row, 0, QTableWidgetItem(str(c["id"])))
+            # Скрываем ID в UserRole, делаем колонку узкой
+            id_item = QTableWidgetItem(str(c["id"]))
+            id_item.setData(Qt.ItemDataRole.UserRole, c["id"])
+            self.table_clients.setItem(row, 0, id_item)
+
             self.table_clients.setItem(row, 1, QTableWidgetItem(fio))
             self.table_clients.setItem(row, 2, QTableWidgetItem(birth))
             self.table_clients.setItem(row, 3, QTableWidgetItem(passport))
             self.table_clients.setItem(row, 4, QTableWidgetItem(address))
+
+        # Показываем подсказку при пустом результате
+        if not clients:
+            self.statusBar().showMessage("Начните вводить запрос для поиска пациентов (минимум 2 символа)")
 
     def format_date(self, raw_str: str) -> str:
         if not raw_str or len(raw_str) < 8:
@@ -783,13 +748,31 @@ class MainWindow(QMainWindow):
         event.accept()
 
 
+def get_resource_path(relative_path: str) -> str:
+    """Возвращает корректный путь к файлам ресурсов в dev и после компиляции PyInstaller."""
+    if getattr(sys, 'frozen', False):
+        base_path = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
+    else:
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base_path, relative_path)
+
+
 def main():
     global _main_window
     logger.info("Инициализация QApplication...")
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(True)
     app.setStyle("Fusion")
-    app.setStyleSheet(FLUENT_LIGHT_STYLE)
+
+    # Корректное получение пути к иконке в любых режимах
+    icon_path = get_resource_path("icon.ico")
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
+        logger.info(f"Иконка приложения установлена: {icon_path}")
+    else:
+        logger.warning(f"Файл иконки не найден: {icon_path}")
+
+    apply_modern_theme(app, "✨ Modern Light")
 
     _main_window = MainWindow()
     _main_window.show()

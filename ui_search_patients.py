@@ -21,8 +21,66 @@ class PatientSearchDialog(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Поиск пациентов и выписка справок")
-        self.resize(1000, 600)
+        self.setWindowTitle("🔍 Поиск пациентов и выписка справок")
+        self.resize(1200, 700)
+        
+        # Установка стилей для всего диалога
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #f5f5f5;
+            }
+            QLabel {
+                font-size: 13px;
+                color: #333;
+            }
+            QLineEdit {
+                padding: 8px;
+                border: 2px solid #ddd;
+                border-radius: 6px;
+                font-size: 13px;
+                background-color: white;
+            }
+            QLineEdit:focus {
+                border-color: #4a90d9;
+            }
+            QTableWidget {
+                border: 1px solid #ddd;
+                border-radius: 6px;
+                background-color: white;
+                gridline-color: #e0e0e0;
+                font-size: 13px;
+            }
+            QTableWidget::item {
+                padding: 6px;
+            }
+            QTableWidget::item:selected {
+                background-color: #4a90d9;
+                color: white;
+            }
+            QHeaderView::section {
+                background-color: #4a90d9;
+                color: white;
+                padding: 8px;
+                border: none;
+                font-weight: bold;
+                font-size: 13px;
+            }
+            QPushButton {
+                background-color: #4a90d9;
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 10px 20px;
+                font-size: 13px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #357abd;
+            }
+            QPushButton:pressed {
+                background-color: #2a5f8f;
+            }
+        """)
 
         # Таймер для задержки быстрого ввода (200 мс)
         self.search_timer = QTimer(self)
@@ -31,15 +89,20 @@ class PatientSearchDialog(QDialog):
         self.search_timer.timeout.connect(self._execute_search)
 
         layout = QVBoxLayout(self)
+        layout.setSpacing(15)
+        layout.setContentsMargins(20, 20, 20, 20)
 
         # Поиск
         search_layout = QHBoxLayout()
-        search_layout.addWidget(QLabel("Поиск (ФИО или Паспорт):"))
+        search_label = QLabel("🔎 Поиск (ФИО или Паспорт):")
+        search_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+        search_layout.addWidget(search_label)
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText(
             "Введите минимум 2 символа для начала поиска..."
         )
         self.search_input.textChanged.connect(self.on_search_text_changed)
+        self.search_input.setFocus()
         search_layout.addWidget(self.search_input)
 
         layout.addLayout(search_layout)
@@ -59,6 +122,7 @@ class PatientSearchDialog(QDialog):
         self.table.setEditTriggers(
             QAbstractItemView.EditTrigger.NoEditTriggers
         )
+        self.table.setAlternatingRowColors(True)
 
         layout.addWidget(self.table)
 
@@ -66,6 +130,9 @@ class PatientSearchDialog(QDialog):
         btn_layout = QHBoxLayout()
         btn_gibdd = QPushButton("🚗 Выписать ГИБДД")
         btn_weapon = QPushButton("🔫 Выписать Оружие")
+        
+        btn_gibdd.setStyleSheet("background-color: #28a745;")
+        btn_weapon.setStyleSheet("background-color: #17a2b8;")
 
         btn_gibdd.clicked.connect(self.open_gibdd)
         btn_weapon.clicked.connect(self.open_weapon)

@@ -49,7 +49,20 @@ def init_reference_tables():
     conn = get_connection()
     cursor = conn.cursor()
     try:
-        # Создание индексов (выполняется один раз при старте, а не при каждом соединении)
+        # Добавляем нормализованные поля для поиска, если их нет
+        try:
+            cursor.execute('ALTER TABLE "Клиенты" ADD COLUMN "search_fio" TEXT;')
+            logger.info("Добавлено поле search_fio для ускоренного поиска")
+        except sqlite3.OperationalError:
+            pass  # Поле уже существует
+        
+        try:
+            cursor.execute('ALTER TABLE "Клиенты" ADD COLUMN "search_passport" TEXT;')
+            logger.info("Добавлено поле search_passport для ускоренного поиска")
+        except sqlite3.OperationalError:
+            pass  # Поле уже существует
+        
+        # Создаем индексы для нормализованных полей
         cursor.execute(
             'CREATE INDEX IF NOT EXISTS "idx_клиенты_фио" ON "Клиенты" ("Фамилия", "Имя", "Отчество");'
         )
@@ -58,6 +71,12 @@ def init_reference_tables():
         )
         cursor.execute(
             'CREATE INDEX IF NOT EXISTS "idx_клиенты_рождение" ON "Клиенты" ("ДатаРождения");'
+        )
+        cursor.execute(
+            'CREATE INDEX IF NOT EXISTS "idx_клиенты_search_fio" ON "Клиенты" ("search_fio");'
+        )
+        cursor.execute(
+            'CREATE INDEX IF NOT EXISTS "idx_клиенты_search_passport" ON "Клиенты" ("search_passport");'
         )
 
         cursor.execute("""
@@ -481,8 +500,7 @@ def search_clients_for_completer(
     cursor = conn.cursor()
     try:
         raw_q = str(query or "").strip()
-        logger.info(f"[SEARCH_DEBUG] Начало поиска. Введенный запрос: '{raw_q}'")
-
+        
         if not raw_q:
             cursor.execute('SELECT * FROM "Клиенты" ORDER BY "Фамилия" ASC LIMIT ?', (limit,))
             return [dict(row) for row in cursor.fetchall()]
@@ -499,12 +517,12 @@ def search_clients_for_completer(
         # 1. ПОИСК: БУКВЫ + ЦИФРЫ (например: сдг23, сдг11, слс13, сдг11121981)
         # ----------------------------------------------------------------------
         match_letters_digits = re.match(
-            r"^([a-zA-яёЁа-яА-Я]{1,10})(\d{1,8})$", q_clean
+            r"^([а-яА-ЯёЁa-zA-Z]{1,10})(\d{1,8})$", q_clean
         )
         if match_letters_digits:
             letters = match_letters_digits.group(1)
             digits = match_letters_digits.group(2)
-            logger.info(f"[SEARCH_DEBUG] Распознан шаблон 'БУКВЫ + ЦИФРЫ': Буквы='{letters}', Цифры='{digits}'")
+            
 
             date_norm_expr = (
                 'CASE '
@@ -556,7 +574,7 @@ def search_clients_for_completer(
             params_a = (f"{low_l}%", f"{cap_l}%", f"{up_l}%") + d_params + (limit,)
             cursor.execute(sql_fam_start, params_a)
             rows = [dict(r) for r in cursor.fetchall()]
-            logger.info(f"[SEARCH_DEBUG] [Вариант 1A - Начало Фамилии + Дата] Найдено: {len(rows)}")
+            
             if rows:
                 return rows
 
@@ -588,14 +606,14 @@ def search_clients_for_completer(
 
                 cursor.execute(sql_inits, params_b)
                 rows = [dict(r) for r in cursor.fetchall()]
-                logger.info(f"[SEARCH_DEBUG] [Вариант 1B - Инициалы + Дата] Найдено: {len(rows)}")
+                
                 if rows:
                     return rows
 
         # ----------------------------------------------------------------------
         # 2. ПОИСК: ТОЛЬКО БУКВЫ (например: соля, слс, сдг)
         # ----------------------------------------------------------------------
-        match_letters = re.match(r"^([a-zA-яёЁа-яА-Я]{1,10})$", q_clean)
+        match_letters = re.match(r"^([а-яА-ЯёЁa-zA-Z]{1,10})$", q_clean)
         if match_letters:
             letters = match_letters.group(1)
             low_l, cap_l, up_l = get_case_variants(letters)
@@ -608,7 +626,6 @@ def search_clients_for_completer(
             """
             cursor.execute(sql_fam_only, (f"{low_l}%", f"{cap_l}%", f"{up_l}%", limit))
             rows = [dict(r) for r in cursor.fetchall()]
-            logger.info(f"[SEARCH_DEBUG] [Вариант 2A - Начало Фамилии] Найдено: {len(rows)}")
             if rows:
                 return rows
 
@@ -639,14 +656,12 @@ def search_clients_for_completer(
 
                 cursor.execute(sql_inits_only, params_inits)
                 rows = [dict(r) for r in cursor.fetchall()]
-                logger.info(f"[SEARCH_DEBUG] [Вариант 2B - Инициалы] Найдено: {len(rows)}")
                 if rows:
                     return rows
 
         # ----------------------------------------------------------------------
         # 3. ОБЩИЙ СКВОЗНОЙ ПОИСК
         # ----------------------------------------------------------------------
-        logger.info("[SEARCH_DEBUG] Переход к Варианту 3: Общий сквозной поиск по всем полям...")
         low_q, cap_q, up_q = get_case_variants(raw_q)
         any_low, any_cap = f"%{low_q}%", f"%{cap_q}%"
 
@@ -685,11 +700,10 @@ def search_clients_for_completer(
 
         cursor.execute(sql_global, params_global)
         rows = [dict(row) for row in cursor.fetchall()]
-        logger.info(f"[SEARCH_DEBUG] [Вариант 3 - Сквозной поиск] Найдено: {len(rows)}")
         return rows
 
     except Exception as e:
-        logger.error(f"[SEARCH_DEBUG] Ошибка при выполнении поиска клиентов: {e}", exc_info=True)
+        logger.error(f"Ошибка при выполнении поиска клиентов: {e}", exc_info=True)
         return []
     finally:
         conn.close()
@@ -741,6 +755,16 @@ def save_client(client_data: Dict[str, Any]) -> int:
         street_clean = normalize_street_name(client_data.get("Улица", ""))
         birth_clean = normalize_date_for_storage(client_data.get("ДатаРождения"))
         issued_clean = normalize_date_for_storage(client_data.get("ДатаВыдачи"))
+        
+        # Нормализуем ФИО и паспорт для ускоренного поиска
+        surname = client_data.get("Фамилия") or ""
+        name = client_data.get("Имя") or ""
+        patronymic = client_data.get("Отчество") or ""
+        search_fio = f"{surname.lower()} {name.lower()} {patronymic.lower()}".strip()
+        
+        ser_pas = client_data.get("СерПасп") or ""
+        psp_nom = client_data.get("ПспНом") or ""
+        search_passport = f"{ser_pas}{psp_nom}".replace(" ", "").lower()
 
         if client_id:
             cursor.execute(
@@ -760,7 +784,9 @@ def save_client(client_data: Dict[str, Any]) -> int:
                     "Район"             = ?,
                     "Улица"             = ?,
                     "Дом"               = ?,
-                    "Квартира"          = ?
+                    "Квартира"          = ?,
+                    "search_fio"        = ?,
+                    "search_passport"   = ?
                 WHERE "id" = ?
                 """,
                 (
@@ -779,6 +805,8 @@ def save_client(client_data: Dict[str, Any]) -> int:
                     street_clean,
                     client_data.get("Дом"),
                     client_data.get("Квартира"),
+                    search_fio,
+                    search_passport,
                     client_id,
                 ),
             )
@@ -789,8 +817,9 @@ def save_client(client_data: Dict[str, Any]) -> int:
                 """
                 INSERT INTO "Клиенты" ("Фамилия", "Имя", "Отчество", "Пол", "ДатаРождения",
                                        "СерПасп", "ПспНом", "ПаспортВыданМесто", "ДатаВыдачи",
-                                       "Область", "Город", "Район", "Улица", "Дом", "Квартира")
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                       "Область", "Город", "Район", "Улица", "Дом", "Квартира",
+                                       "search_fio", "search_passport")
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     client_data.get("Фамилия"),
@@ -808,6 +837,8 @@ def save_client(client_data: Dict[str, Any]) -> int:
                     street_clean,
                     client_data.get("Дом"),
                     client_data.get("Квартира"),
+                    search_fio,
+                    search_passport,
                 ),
             )
             conn.commit()
@@ -827,6 +858,71 @@ def get_client_by_id(client_id: int) -> Optional[Dict[str, Any]]:
         cursor.execute('SELECT * FROM "Клиенты" WHERE "id" = ?', (client_id,))
         row = cursor.fetchone()
         return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def check_duplicate_client(client_data: Dict[str, Any], exclude_id: Optional[int] = None) -> Optional[Dict[str, Any]]:
+    """
+    Проверяет наличие дубликата клиента по ФИО + дата рождения или паспорт.
+    Возвращает найденного дубликата или None.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        surname = (client_data.get("Фамилия") or "").strip().lower()
+        name = (client_data.get("Имя") or "").strip().lower()
+        patronymic = (client_data.get("Отчество") or "").strip().lower()
+        birth_date = normalize_date_for_storage(client_data.get("ДатаРождения"))
+        ser_pas = (client_data.get("СерПасп") or "").strip()
+        psp_nom = (client_data.get("ПспНом") or "").strip()
+        
+        if not surname or not name or not birth_date:
+            return None
+        
+        # Формируем условия поиска
+        conditions = []
+        params = []
+        
+        # Поиск по ФИО + дата рождения
+        fio_birth_cond = """
+            (LOWER("Фамилия") = ? AND LOWER("Имя") = ? 
+             AND (LOWER(COALESCE("Отчество", "")) = ? OR (? = '' AND "Отчество" IS NULL))
+             AND "ДатаРождения" = ?)
+        """
+        conditions.append(fio_birth_cond)
+        params.extend([surname, name, patronymic, patronymic, birth_date])
+        
+        # Поиск по паспорту (если заполнен)
+        if ser_pas and psp_nom:
+            passport_cond = '(COALESCE("СерПасп", "") = ? AND COALESCE("ПспНом", "") = ?)'
+            conditions.append(passport_cond)
+            params.extend([ser_pas, psp_nom])
+        
+        # Объединяем условия через OR
+        where_clause = " OR ".join(conditions)
+        
+        # Исключаем текущего клиента при обновлении
+        if exclude_id:
+            where_clause += f' AND "id" != ?'
+            params.append(exclude_id)
+        
+        sql = f'SELECT * FROM "Клиенты" WHERE {where_clause} LIMIT 1'
+        cursor.execute(sql, params)
+        row = cursor.fetchone()
+        
+        if row:
+            duplicate = dict(row)
+            logger.warning(
+                f"Найден возможный дубликат клиента: ID={duplicate['id']}, "
+                f"ФИО={duplicate['Фамилия']} {duplicate['Имя']} {duplicate.get('Отчество', '')}"
+            )
+            return duplicate
+        
+        return None
+    except Exception as e:
+        logger.error(f"Ошибка при проверке дубликата клиента: {e}", exc_info=True)
+        return None
     finally:
         conn.close()
 
@@ -999,6 +1095,122 @@ def get_statistics_for_period(start_date: str, end_date: str) -> Dict[str, Any]:
             "total_count": 0,
             "total_sum": 0.0,
         }
+    finally:
+        conn.close()
+
+
+def get_spreadsheet_data_for_period(start_date: str, end_date: str) -> List[List[str]]:
+    """
+    Получает данные для экспорта в Excel за указанный период.
+    Возвращает список строк с данными:
+    [Номер справки, Дата выдачи, Действительна до, Фамилия, Имя, Отчество, 
+     Дата рождения, Адрес, Заключение, Примечание]
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    def normalize_to_iso(d_str: str) -> str:
+        if not d_str:
+            return ""
+        s = d_str.strip()
+        if "." in s:
+            parts = s.split(".")
+            if len(parts) == 3:
+                return f"{parts[2]}-{parts[1].zfill(2)}-{parts[0].zfill(2)}"
+        return s
+    
+    start_iso = normalize_to_iso(start_date)
+    end_iso = normalize_to_iso(end_date)
+    
+    sql_date_conv = """
+        CASE 
+            WHEN "Дата" LIKE '__.__.____' THEN 
+                SUBSTR("Дата", 7, 4) || '-' || SUBSTR("Дата", 4, 2) || '-' || SUBSTR("Дата", 1, 2)
+            ELSE "Дата"
+        END
+    """
+    
+    try:
+        # Запрос для ГИБДД
+        query_gibdd = f"""
+            SELECT 
+                s."ВыданаСправка№" AS "НомерСправки",
+                s."Дата" AS "ДатаВыдачи",
+                s."Сроком" AS "ДействительнаДо",
+                c."Фамилия",
+                c."Имя",
+                c."Отчество",
+                c."ДатаРождения",
+                COALESCE(c."Улица", '') || ', д. ' || COALESCE(c."Дом", '') || 
+                    CASE WHEN c."Квартира" IS NOT NULL AND c."Квартира" != '' THEN ', кв. ' || c."Квартира" ELSE '' END AS "Адрес",
+                'Годен' AS "Заключение",
+                COALESCE(s."Примечание", '') AS "Примечание"
+            FROM "Сделки" s
+            JOIN "Клиенты" c ON s."КлиентID" = c."rowid"
+            WHERE {sql_date_conv} >= ? AND {sql_date_conv} <= ?
+        """
+        cursor.execute(query_gibdd, (start_iso, end_iso))
+        rows_gibdd = cursor.fetchall()
+        
+        # Запрос для Оружия
+        query_weapon = f"""
+            SELECT 
+                w."Справка№" AS "НомерСправки",
+                w."Дата" AS "ДатаВыдачи",
+                '' AS "ДействительнаДо",
+                c."Фамилия",
+                c."Имя",
+                c."Отчество",
+                c."ДатаРождения",
+                COALESCE(c."Улица", '') || ', д. ' || COALESCE(c."Дом", '') || 
+                    CASE WHEN c."Квартира" IS NOT NULL AND c."Квартира" != '' THEN ', кв. ' || c."Квартира" ELSE '' END AS "Адрес",
+                'Годен' AS "Заключение",
+                COALESCE(w."Примечание", '') AS "Примечание"
+            FROM "Справки_Оружие" w
+            JOIN "Клиенты" c ON w."КлиентID" = c."rowid"
+            WHERE {sql_date_conv} >= ? AND {sql_date_conv} <= ?
+        """
+        cursor.execute(query_weapon, (start_iso, end_iso))
+        rows_weapon = cursor.fetchall()
+        
+        # Объединяем результаты
+        all_rows = []
+        for row in rows_gibdd:
+            all_rows.append([
+                str(row["НомерСправки"] or ""),
+                row["ДатаВыдачи"] or "",
+                row["ДействительнаДо"] or "",
+                row["Фамилия"] or "",
+                row["Имя"] or "",
+                row["Отчество"] or "",
+                row["ДатаРождения"] or "",
+                row["Адрес"] or "",
+                row["Заключение"] or "",
+                row["Примечание"] or ""
+            ])
+        
+        for row in rows_weapon:
+            all_rows.append([
+                str(row["НомерСправки"] or ""),
+                row["ДатаВыдачи"] or "",
+                row["ДействительнаДо"] or "",
+                row["Фамилия"] or "",
+                row["Имя"] or "",
+                row["Отчество"] or "",
+                row["ДатаРождения"] or "",
+                row["Адрес"] or "",
+                row["Заключение"] or "",
+                row["Примечание"] or ""
+            ])
+        
+        # Сортируем по дате выдачи
+        all_rows.sort(key=lambda x: x[1], reverse=True)
+        
+        return all_rows
+        
+    except Exception as e:
+        logger.error(f"Ошибка получения данных для экспорта: {e}", exc_info=True)
+        return []
     finally:
         conn.close()
 
